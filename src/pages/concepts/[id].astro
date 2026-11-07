@@ -1,0 +1,89 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getGraph, conceptUrl, functionUrl } from '../../lib/graph';
+import { conceptBacklinks } from '../../lib/compose';
+import { withBase } from '../../lib/url';
+
+export function getStaticPaths() {
+  const graph = getGraph();
+  return [...graph.concepts.keys()].map((id) => ({ params: { id } }));
+}
+
+const { id } = Astro.params;
+const graph = getGraph();
+const concept = graph.concepts.get(id!);
+if (!concept) throw new Error(`找不到概念：${id}`);
+
+const backlinks = conceptBacklinks(graph, concept.id);
+const related = concept.related
+  .map((relatedId) => graph.concepts.get(relatedId))
+  .filter((item): item is NonNullable<typeof item> => Boolean(item));
+---
+
+<Base title={`${concept.title} · 概念词典`} description={concept.summary}>
+  <article class="mx-auto max-w-3xl">
+    <header class="mb-7">
+      <a href={withBase('/concepts')} class="link link-hover text-xs text-base-content/50">← 概念词典</a>
+      <h1 class="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">{concept.title}</h1>
+      <p class="mt-3 text-[15px] leading-relaxed text-base-content/70">{concept.summary}</p>
+      {
+        concept.aliases.length > 0 && (
+          <p class="mt-3 text-xs text-base-content/45">又称：{concept.aliases.join(' / ')}</p>
+        )
+      }
+    </header>
+
+    <div
+      class="prose prose-sm max-w-none sm:prose-base dark:prose-invert prose-headings:scroll-mt-24 prose-h2:text-sm prose-h2:font-semibold prose-h2:uppercase prose-h2:tracking-[0.12em] prose-h2:text-base-content/50 prose-a:text-secondary prose-strong:text-base-content prose-li:my-0.5"
+      set:html={concept.html}
+    />
+
+    {
+      related.length > 0 && (
+        <section class="mt-9">
+          <h2 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">相关概念</h2>
+          <div class="mt-3 flex flex-wrap gap-2">
+            {related.map((item) => (
+              <a
+                href={conceptUrl(item.id)}
+                class="rounded-full bg-base-100 px-3.5 py-2 text-sm shadow-xs transition hover:text-secondary"
+              >
+                {item.title}
+              </a>
+            ))}
+          </div>
+        </section>
+      )
+    }
+
+    <section class="mt-9 rounded-3xl bg-base-100 p-5 shadow-xs">
+      <h2 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+        出现在这些功能里
+      </h2>
+
+      {
+        backlinks.length === 0 ? (
+          <p class="mt-3 text-sm text-base-content/50">目前还没有功能引用这个概念。</p>
+        ) : (
+          <ul class="mt-3 space-y-3">
+            {backlinks.map(({ fn, ops }) => (
+              <li>
+                <a
+                  href={functionUrl(fn.id)}
+                  class="text-sm font-medium link link-hover text-secondary"
+                >
+                  {fn.question}
+                </a>
+                <ul class="mt-1.5 space-y-1 border-l border-base-300 pl-3">
+                  {ops.map((op) => (
+                    <li class="text-[13px] leading-relaxed text-base-content/60">{op.action}</li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </section>
+  </article>
+</Base>

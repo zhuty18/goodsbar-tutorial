@@ -1,0 +1,284 @@
+# 原子操作：用户的一次原始动作，绑定唯一界面。
+# keywords 指向概念词典；一个功能的全部 keywords 必须覆盖该功能声明的 concepts。
+# 标签不在这一层：自定义位标签绑在「行为」（行为）上，见 behaviors.yaml。
+# image 是这一步的界面截图，写相对 public/ 的路径，例如 shots/product-list/click-new.png。
+#       配了图之后 hotspot 就叠在图上当高亮；没配图则退回骨架示意图。
+# short 是示意图下方显示的中文简称（四五个字），必填。
+# hotspot 是界面示意图上的高亮区域（百分比），用来标出「点哪儿」。
+
+- id: apply-rule
+  screen: checkout
+  action: 点「优惠」，让系统按优先级挑一条规则
+  short: 优惠选择
+  note: 一单只命中一条，不叠加；命中哪条会写在下方。
+  keywords: [discount-rule]
+  hotspot:
+    x: 38
+    y: 68
+    w: 26
+    h: 8
+
+- id: checkout-pay
+  screen: checkout
+  action: 收款并打印小票
+  short: 收款结账
+  hotspot:
+    x: 74
+    y: 84
+    w: 18
+    h: 8
+
+- id: click-new
+  screen: product-list
+  action: 点击右上角「新建商品」
+  short: 新建入口
+  note: 全系统只有这一个新建入口，避免同一件商品建出两份档案。
+  hotspot:
+    x: 74
+    y: 10
+    w: 20
+    h: 8
+
+- id: click-new-take
+  screen: stock-take
+  action: 在盘点页点击「新建盘点单」
+  short: 新建盘点
+  keywords: [take-order]
+  hotspot:
+    x: 74
+    y: 10
+    w: 20
+    h: 8
+
+- id: click-offline
+  screen: product-list
+  action: 点击行尾的「下架」
+  short: 下架按钮
+  hotspot:
+    x: 70
+    y: 30
+    w: 16
+    h: 7
+
+- id: commit-take
+  screen: stock-take
+  action: 点击「提交盘点单」
+  short: 提交盘点
+  note: 系统按「实盘 − 账面」生成一条调平流水，不覆盖历史。
+  keywords: [stock-deduction]
+  hotspot:
+    x: 70
+    y: 84
+    w: 18
+    h: 8
+
+- id: confirm-offline
+  screen: product-list
+  action: 在确认框里再次确认
+  short: 二次确认
+  note: 下架后收银台扫不出来，但流水、库存、评价一条都不会少。
+  keywords: [soft-delete]
+  hotspot:
+    x: 34
+    y: 42
+    w: 32
+    h: 18
+
+- id: confirm-tier
+  screen: checkout
+  action: 核对会员等级与当前可用折扣
+  short: 等级核对
+  note: 等级只是默认值，最终成交价要到下一屏才定下来。
+  hotspot:
+    x: 5
+    y: 36
+    w: 26
+    h: 14
+
+- id: export-csv
+  screen: sales-report
+  action: 导出 CSV 做进一步分析
+  short: 导出数据
+  hotspot:
+    x: 76
+    y: 84
+    w: 16
+    h: 8
+
+- id: fill-name
+  screen: product-edit
+  action: 填写商品名、规格和单位
+  short: 填写档案
+  note: 这三项是必填，其余字段都可以先空着，之后再补。
+  keywords: [sku]
+  hotspot:
+    x: 22
+    y: 18
+    w: 58
+    h: 9
+
+- id: include-offline
+  screen: sales-report
+  action: 勾选「包含已下架商品」
+  short: 含下架筛选
+  note: 下架从来不是删除，只是默认视图里不显示。
+  keywords: [soft-delete]
+  hotspot:
+    x: 20
+    y: 24
+    w: 22
+    h: 6
+
+- id: manual-override
+  screen: checkout
+  action: 需要时手工改价（受角色权限限制）
+  short: 手工改价
+  note: 改价会被记进流水备注，月末对账能按操作人筛出来。
+  keywords: [price-snapshot]
+  hotspot:
+    x: 66
+    y: 68
+    w: 24
+    h: 8
+
+- id: open-report
+  screen: sales-report
+  action: 打开「数据 → 销售报表」
+  short: 报表入口
+  hotspot:
+    x: 28
+    y: 12
+    w: 40
+    h: 7
+
+- id: pick-product
+  screen: sales-report
+  action: 点商品名，进入单品历史
+  short: 单品钻取
+  hotspot:
+    x: 22
+    y: 38
+    w: 36
+    h: 6
+
+- id: pick-range
+  screen: sales-report
+  action: 选择时间范围（最长回溯 24 个月）
+  short: 时间范围
+  note: 超过 24 个月的数据在归档库里，需要走导出申请。
+  hotspot:
+    x: 62
+    y: 12
+    w: 32
+    h: 7
+
+- id: pick-scope
+  screen: stock-take
+  action: 选择盘点范围：全店 / 某个分类 / 指定商品
+  short: 选择范围
+  note: 范围越小盘得越快，但小范围盘点发现的差异不代表其它分类没问题。
+  hotspot:
+    x: 24
+    y: 24
+    w: 52
+    h: 12
+
+- id: review-diff
+  screen: stock-take
+  action: 在「差异」列复核多出来的和少掉的
+  short: 复核差异
+  note: 差额只是标红，不影响账面，提交之前随时可以改。
+  hotspot:
+    x: 20
+    y: 58
+    w: 60
+    h: 14
+
+- id: save-publish
+  screen: product-edit
+  action: 点击「保存并上架」
+  short: 保存上架
+  note: 也可以只保存不上架，商品会出现在列表的「草稿」筛选里。
+  hotspot:
+    x: 64
+    y: 82
+    w: 18
+    h: 8
+
+- id: scan-barcode
+  screen: product-list
+  action: 在弹窗里扫一下商品条码
+  short: 扫码带入
+  note: 条码能识别时，名称、规格、单位会自动带出来，只需核对。
+  hotspot:
+    x: 26
+    y: 30
+    w: 46
+    h: 8
+
+- id: scan-or-input
+  screen: stock-take
+  action: 逐项扫码或直接输入实盘数量
+  short: 逐项点数
+  note: 没扫到的商品按账面数处理，不会被当成 0。
+  hotspot:
+    x: 22
+    y: 30
+    w: 44
+    h: 7
+
+- id: search-member
+  screen: checkout
+  action: 在结算台左侧输入会员手机号
+  short: 会员检索
+  keywords: [member-tier]
+  hotspot:
+    x: 5
+    y: 22
+    w: 26
+    h: 10
+
+- id: select-product
+  screen: product-list
+  action: 在列表里勾选要停售的商品
+  short: 勾选商品
+  note: 支持批量勾选，一次可以下架多个。
+  hotspot:
+    x: 20
+    y: 30
+    w: 8
+    h: 6
+
+- id: set-category
+  screen: product-edit
+  action: 选择分类
+  short: 选择分类
+  note: 分类决定它在收银台的商品栏里排第几列，以及报表按什么维度汇总。
+  hotspot:
+    x: 22
+    y: 32
+    w: 58
+    h: 9
+
+- id: set-initial-stock
+  screen: product-edit
+  action: 填写期初库存
+  short: 期初库存
+  note: 期初库存不产生流水，它只是这笔商品流水的起点。
+  keywords: [stock-deduction]
+  hotspot:
+    x: 22
+    y: 60
+    w: 58
+    h: 9
+
+- id: set-price
+  screen: product-edit
+  action: 填写售价与会员价
+  short: 设置售价
+  note: 会员价留空时，结算会按会员等级自动折算。
+  hotspot:
+    x: 22
+    y: 46
+    w: 58
+    h: 9

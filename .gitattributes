@@ -1,0 +1,3 @@
+# pnpm 自己用 LF 序列化锁文件。固定成 LF：无论谁在什么系统上跑 install，
+# 这个文件都不参与换行符转换，也不会在提交时产生整份文件的换行 diff。
+pnpm-lock.yaml text eol=lf

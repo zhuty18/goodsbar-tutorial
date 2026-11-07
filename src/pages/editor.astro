@@ -1,0 +1,899 @@
+---
+import Base from '../layouts/Base.astro';
+import { getGraph } from '../lib/graph';
+import { stripBase } from '../lib/url';
+
+const graph = getGraph();
+
+const data = {
+  // route 是推导出来的，不进打包文件
+  screens: [...graph.screens.values()].map(({ route, ...screen }) => screen),
+  ops: [...graph.ops.values()],
+  behaviors: [...graph.behaviors.values()],
+  functions: graph.functions,
+  concepts: [...graph.concepts.values()].map((concept) => ({
+    id: concept.id,
+    title: concept.title,
+    summary: concept.summary,
+    aliases: concept.aliases,
+    related: concept.related,
+    body: concept.body,
+  })),
+  tags: [...graph.tags.values()],
+  categories: [...graph.categories.values()],
+};
+
+const bootstrap = JSON.stringify(data).replace(/</g, '\\u003c');
+/** 界面 id → 可用截图，单独传，不混进导出包 */
+const shots = JSON.stringify(Object.fromEntries(graph.shots)).replace(/</g, '\\u003c');
+const basePath = stripBase(Astro.url.pathname);
+---
+
+<Base title="内容编辑器 · 内部工具" description="维护手册内容并导出打包文件。" noindex>
+  <div class="mb-6 flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <p class="text-[11px] font-semibold tracking-[0.08em] text-secondary">内部工具</p>
+      <h1 class="mt-1.5 text-2xl font-bold tracking-tight">内容编辑器</h1>
+      <p class="mt-1.5 text-sm text-base-content/55">
+        改完导出打包文件，再用 <code class="rounded bg-base-100 px-1.5 py-0.5 font-mono text-[12px]">python scripts/apply_bundle.py</code> 写回
+        <code class="rounded bg-base-100 px-1.5 py-0.5 font-mono text-[12px]">src/content</code>。
+      </p>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2">
+      <span id="dirty" class="hidden text-[11px] text-warning">有未导出的改动</span>
+      <label class="btn btn-sm btn-ghost">
+        导入
+        <input id="import" type="file" accept="application/json,.json" class="hidden" />
+      </label>
+      <button id="export" type="button" class="btn btn-sm btn-primary">导出打包文件</button>
+    </div>
+  </div>
+
+  <div id="problems" class="mb-4 hidden rounded-2xl bg-error/10 px-4 py-3 text-[13px] text-error"></div>
+
+  <div id="tabs" class="mb-4 flex flex-wrap gap-1.5"></div>
+
+  <div class="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+    <aside class="flex flex-col rounded-3xl bg-base-100 p-4 shadow-xs lg:sticky lg:top-[4.75rem] lg:h-[calc(100vh_-_6.5rem)]">
+      <div class="mb-3 flex items-center gap-2">
+        <input id="filter" class="input input-sm w-full" placeholder="过滤…" autocomplete="off" />
+        <button id="add" type="button" class="btn btn-sm btn-square btn-primary shrink-0" title="新建">+</button>
+      </div>
+      <ul id="list" class="min-h-0 flex-1 space-y-0.5 overflow-auto"></ul>
+    </aside>
+
+    <section class="rounded-3xl bg-base-100 p-5 shadow-xs" data-base={import.meta.env.BASE_URL}>
+      <form id="form" class="space-y-4"></form>
+    </section>
+  </div>
+
+  <script type="application/json" id="bootstrap" set:html={bootstrap}></script>
+  <script type="application/json" id="shots" set:html={shots}></script>
+
+  <script>
+    const DATA_PATH = `${window.location.pathname.replace(/\/+$/, '')}`;
+
+    const COLLECTIONS = [
+      { key: 'screens', label: '界面', secondary: 'name' },
+      { key: 'ops', label: '原子操作', secondary: 'action' },
+      { key: 'behaviors', label: '行为', secondary: 'title' },
+      { key: 'functions', label: '功能', secondary: 'question' },
+      { key: 'concepts', label: '概念', secondary: 'title' },
+      { key: 'tags', label: '标签', secondary: 'label' },
+      { key: 'categories', label: '分类', secondary: 'label' },
+    ];
+
+    const FIELDS = {
+      functions: [
+        { k: 'id', label: 'ID', type: 'text', required: true },
+        { k: 'question', label: '标题', type: 'text', required: true },
+        { k: 'summary', label: '摘要', type: 'textarea', required: true },
+        { k: 'behaviors', label: '行为序列（有序，可上下调）', type: 'refseq', ref: 'behaviors' },
+        { k: 'category', label: '分类', type: 'ref', ref: 'categories', required: true },
+      ],
+      behaviors: [
+        { k: 'id', label: 'ID', type: 'text', required: true },
+        { k: 'title', label: '标题', type: 'text', required: true },
+        { k: 'screen', label: '界面（固定位标签）', type: 'ref', ref: 'screens', required: true },
+        { k: 'intro', label: '引言', type: 'textarea' },
+        { k: 'ops', label: '原子操作（有序，可上下调）', type: 'refseq', ref: 'ops' },
+        { k: 'tags', label: '标签（自定义位）', type: 'refs', ref: 'tags' },
+      ],
+      ops: [
+        { k: 'id', label: 'ID', type: 'text', required: true },
+        { k: 'short', label: '名称', type: 'text', required: true },
+        { k: 'screen', label: '界面', type: 'ref', ref: 'screens', required: true },
+        { k: 'action', label: '操作', type: 'text', required: true },
+        { k: 'note', label: '说明', type: 'textarea' },
+        { k: 'image', label: '截图', type: 'shot' },
+        { k: 'hotspot', label: '高亮区域（百分比）', type: 'hotspot' },
+        { k: 'keywords', label: '相关概念', type: 'refs', ref: 'concepts' },
+      ],
+      screens: [
+        { k: 'id', label: 'ID', type: 'text', required: true },
+        { k: 'name', label: '名称', type: 'text', required: true },
+        { k: 'parent', label: '亲界面（留空 = 一级界面）', type: 'ref', ref: 'screens' },
+        { k: 'note', label: '说明', type: 'textarea' },
+      ],
+      concepts: [
+        { k: 'id', label: 'ID（也是文件名）', type: 'text', required: true },
+        { k: 'title', label: '标题', type: 'text', required: true },
+        { k: 'summary', label: '概括', type: 'textarea', required: true },
+        { k: 'aliases', label: '别名', type: 'stringlist' },
+        { k: 'body', label: '正文（Markdown）', type: 'textarea', rows: 10 },
+        { k: 'related', label: '相关概念', type: 'refs', ref: 'concepts' },
+      ],
+      tags: [
+        { k: 'id', label: 'ID（英文 slug）', type: 'text', required: true },
+        { k: 'label', label: '显示名', type: 'text', required: true },
+        { k: 'description', label: '说明', type: 'text' },
+      ],
+      categories: [
+        { k: 'id', label: 'ID（英文 slug）', type: 'text', required: true },
+        { k: 'label', label: '显示名（角标取首字）', type: 'text', required: true },
+        { k: 'description', label: '说明', type: 'text' },
+      ],
+    };
+
+    const bootstrapText = document.getElementById('bootstrap')?.textContent ?? '{}';
+    const initial = JSON.parse(bootstrapText);
+    /** 界面 id → 该界面可用的截图，第一个是默认图 */
+    const SHOTS = JSON.parse(document.getElementById('shots')?.textContent ?? '{}');
+
+    const state = {
+      data: structuredClone(initial),
+      collection: 'screens',
+      selectedId: null,
+      /** 左侧分组里当前展开的那个（按界面 id），其余折叠 */
+      expandedGroup: null,
+      filter: '',
+      dirty: false,
+    };
+
+    const el = {
+      tabs: document.getElementById('tabs'),
+      list: document.getElementById('list'),
+      form: document.getElementById('form'),
+      filter: document.getElementById('filter'),
+      add: document.getElementById('add'),
+      exportBtn: document.getElementById('export'),
+      importInput: document.getElementById('import'),
+      problems: document.getElementById('problems'),
+      dirty: document.getElementById('dirty'),
+    };
+
+    const escapeHtml = (value) =>
+      String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+
+    /** 人读的名字：优先中文，id 只作备注 */
+    const itemLabel = (item) => item?.short ?? item?.label ?? item?.title ?? item?.name ?? item?.action ?? '';
+    const optionText = (item) => `${itemLabel(item) || item.id}（${item.id}）`;
+
+    const BASE = document.querySelector('[data-base]')?.getAttribute('data-base') ?? '/';
+    /** 截图路径相对 public/，预览时要补上部署前缀 */
+    const editorImageUrl = (path) => `${BASE}${String(path).replace(/^\/+/, '')}`;
+    /** 自己指定了就用，否则用所在界面的默认截图 */
+    const effectiveImage = (record) =>
+      record.image || (SHOTS[record.screen] ?? [])[0] || '';
+
+    const records = () => state.data[state.collection] ?? [];
+    const current = () => records().find((item) => item.id === state.selectedId) ?? null;
+    const fields = () => FIELDS[state.collection] ?? [];
+
+    function markDirty() {
+      state.dirty = true;
+      el.dirty?.classList.remove('hidden');
+    }
+
+    function renderTabs() {
+      el.tabs.innerHTML = COLLECTIONS.map((collection) => {
+        const on = collection.key === state.collection;
+        return `<button type="button" data-tab="${collection.key}"
+          class="btn btn-sm ${on ? 'btn-primary' : 'btn-ghost'} font-normal">
+          ${collection.label}<span class="ml-1 font-mono text-[10px] opacity-60">${(state.data[collection.key] ?? []).length}</span>
+        </button>`;
+      }).join('');
+    }
+
+    function renderList() {
+      const collection = COLLECTIONS.find((item) => item.key === state.collection);
+      const term = state.filter.trim().toLowerCase();
+      const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+      const rowHtml = (record) => {
+        const on = record.id === state.selectedId;
+        const label = itemLabel(record) || record[collection.secondary] || record.id;
+        return `<li>
+          <button type="button" data-record="${escapeHtml(record.id)}"
+            class="w-full rounded-xl px-3 py-2 text-left transition ${on ? 'bg-primary/10' : 'hover:bg-base-200/70'}">
+            <span class="block truncate text-[13px] font-medium">${escapeHtml(label)}</span>
+            <span class="block truncate font-mono text-[10px] text-base-content/35">${escapeHtml(record.id)}</span>
+          </button>
+        </li>`;
+      };
+
+      const items = records().filter((record) => {
+        if (!term) return true;
+        const label = itemLabel(record) || record[collection.secondary] || record.id;
+        return `${label} ${record.id}`.toLowerCase().includes(term);
+      });
+
+      // 原子操作和按界面分组（组内再按 id 排序）
+      let html;
+      if (collection.key === 'ops' || collection.key === 'behaviors') {
+        const groups = new Map();
+        for (const record of items) {
+          const key = record.screen ?? '';
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(record);
+        }
+
+        html = [...groups.keys()]
+          .sort()
+          .map((key) => {
+            const screen = (state.data.screens ?? []).find((item) => item.id === key);
+            const rows = groups.get(key).sort(byId);
+            const open = term.length > 0 || state.expandedGroup === key;
+
+            const header = `<li>
+              <button type="button" data-group="${escapeHtml(key)}"
+                class="mt-1 flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[10px] font-semibold text-base-content/45 transition hover:bg-base-200/60">
+                <span class="inline-block text-[9px] transition-transform ${open ? 'rotate-90' : ''}">▸</span>
+                <span class="truncate">${escapeHtml(screen?.name ?? '未分组')}</span>
+                <span class="truncate font-mono font-normal text-base-content/30">${escapeHtml(key)}</span>
+                <span class="ml-auto shrink-0 font-normal text-base-content/30">${rows.length}</span>
+              </button>
+            </li>`;
+
+            return open ? header + rows.map(rowHtml).join('') : header;
+          })
+          .join('');
+      } else {
+        html = items.sort(byId).map(rowHtml).join('');
+      }
+
+      el.list.innerHTML = html || '<li class="px-3 py-6 text-center text-xs text-base-content/40">没有记录</li>';
+    }
+
+    function fieldHtml(field, record) {
+      const value = record[field.k];
+      const req = field.required ? ' data-required="1"' : '';
+
+      if (field.type === 'stringlist') {
+        const items = Array.isArray(value) ? value : [];
+        const rows = items
+          .map(
+            (item, index) => `<li class="flex items-center gap-1.5">
+              <input data-list="${field.k}" data-index="${index}" value="${escapeHtml(item)}"
+                class="input input-sm w-full bg-base-200/50" placeholder="别名" />
+              <button type="button" data-list-remove="${field.k}" data-index="${index}" class="btn btn-xs btn-ghost btn-square shrink-0 text-error" title="移除">×</button>
+            </li>`,
+          )
+          .join('');
+
+        return `<div>
+          <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
+          <ul class="space-y-1">${rows || '<li class="rounded-lg bg-base-200/40 px-2 py-2 text-center text-[11px] text-base-content/40">（空）</li>'}</ul>
+          <button type="button" data-list-add="${field.k}" class="btn btn-xs mt-1.5">+ 添加</button>
+        </div>`;
+      }
+
+      if (field.type === 'textarea') {
+        return `<label class="block">
+          <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
+          <textarea data-field="${field.k}" rows="${field.rows ?? 3}"${req}
+            class="textarea w-full bg-base-200/50 font-mono text-[13px]">${escapeHtml(value ?? '')}</textarea>
+        </label>`;
+      }
+
+      if (field.type === 'ref') {
+        // 亲界面只能在「一级界面」里选，且不能选自己
+        const pool =
+          field.k === 'parent'
+            ? (state.data.screens ?? []).filter((item) => !item.parent && item.id !== record.id)
+            : (state.data[field.ref] ?? []);
+
+        const options = pool
+          .map(
+            (item) =>
+              `<option value="${escapeHtml(item.id)}"${item.id === value ? ' selected' : ''}>${escapeHtml(optionText(item))}</option>`,
+          )
+          .join('');
+        return `<label class="block">
+          <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
+          <select data-field="${field.k}"${req} class="select w-full bg-base-200/50">
+            <option value="">（未选）</option>${options}
+          </select>
+        </label>`;
+      }
+
+      if (field.type === 'refs') {
+        const chosen = new Set(Array.isArray(value) ? value : []);
+        const boxes = (state.data[field.ref] ?? [])
+          .map(
+            (item) => `<label class="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-base-200/60">
+              <input type="checkbox" data-field="${field.k}" value="${escapeHtml(item.id)}"${chosen.has(item.id) ? ' checked' : ''} class="checkbox checkbox-xs" />
+              <span class="min-w-0 truncate text-[12px]">${escapeHtml(itemLabel(item))}</span>
+              <span class="min-w-0 shrink-0 truncate font-mono text-[10px] text-base-content/35">${escapeHtml(item.id)}</span>
+            </label>`,
+          )
+          .join('');
+        return `<div>
+          <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
+          <div class="max-h-44 space-y-0.5 overflow-auto rounded-xl bg-base-200/40 p-1.5">${boxes || '<p class="px-2 py-1 text-xs text-base-content/40">（无可选项）</p>'}</div>
+        </div>`;
+      }
+
+      if (field.type === 'refseq') {
+        const list = Array.isArray(value) ? value : [];
+        const lookup = new Map((state.data[field.ref] ?? []).map((item) => [item.id, item]));
+
+        // 行为选原子操作时，只列同一个界面下的——一个行为不跨界面
+        const pool =
+          field.ref === 'ops' && record.screen
+            ? (state.data.ops ?? []).filter((item) => item.screen === record.screen)
+            : (state.data[field.ref] ?? []);
+
+        const rows = list
+          .map((id, index) => {
+            const item = lookup.get(id);
+            return `<li class="flex items-center gap-1.5 rounded-lg bg-base-200/40 px-2 py-1">
+              <span class="w-4 shrink-0 text-right font-mono text-[11px] text-base-content/40">${index + 1}</span>
+              <span class="min-w-0 truncate text-[13px]">${escapeHtml(item ? itemLabel(item) : '（不存在）')}</span>
+              <span class="hidden min-w-0 truncate font-mono text-[10px] text-base-content/35 sm:block">${escapeHtml(id)}</span>
+              <span class="flex-1"></span>
+              <button type="button" data-order="up" data-field="${field.k}" data-index="${index}" class="btn btn-xs btn-ghost btn-square"${index === 0 ? ' disabled' : ''} title="上移">↑</button>
+              <button type="button" data-order="down" data-field="${field.k}" data-index="${index}" class="btn btn-xs btn-ghost btn-square"${index === list.length - 1 ? ' disabled' : ''} title="下移">↓</button>
+              <button type="button" data-order="remove" data-field="${field.k}" data-index="${index}" class="btn btn-xs btn-ghost btn-square text-error" title="移除">×</button>
+            </li>`;
+          })
+          .join('');
+
+        const options = pool
+          .filter((item) => !list.includes(item.id))
+          .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(optionText(item))}</option>`)
+          .join('');
+
+        return `<div>
+          <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
+          <ol class="space-y-1">${rows || '<li class="rounded-lg bg-base-200/40 px-2 py-2 text-center text-[11px] text-base-content/40">（空）</li>'}</ol>
+          <div class="mt-2 flex gap-2">
+            <select data-add-for="${field.k}" class="select select-sm min-w-0 flex-1 bg-base-200/50">
+              ${options || '<option value="">（没有可添加的项）</option>'}
+            </select>
+            <button type="button" data-order="add" data-field="${field.k}" class="btn btn-sm shrink-0"${options ? '' : ' disabled'}>添加</button>
+          </div>
+        </div>`;
+      }
+
+      if (field.type === 'shot') {
+        const options = SHOTS[record.screen] ?? [];
+        const rows = options
+          .map(
+            (shot) =>
+              `<option value="${escapeHtml(shot)}"${shot === value ? ' selected' : ''}>${escapeHtml(shot.replace(/^shots\//, ''))}</option>`,
+          )
+          .join('');
+
+        return `<label class="block">
+          <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
+          <select data-field="${field.k}" class="select w-full bg-base-200/50">
+            <option value="">（默认：${options[0] ? escapeHtml(options[0].replace(/^shots\//, '')) : '该界面还没有截图'}）</option>
+            ${rows}
+          </select>
+          <span class="mt-1 block text-[10px] text-base-content/35">截图放在 public/shots/&lt;界面id&gt;-&lt;编号&gt;.png</span>
+        </label>`;
+      }
+
+      if (field.type === 'hotspot') {
+        const spot = value ?? {};
+        const part = (key, text) => `<label class="flex items-center gap-1">
+          <span class="text-[11px] text-base-content/45">${text}</span>
+          <input type="number" data-field="hotspot.${key}" value="${spot[key] ?? ''}" class="input input-sm w-16 bg-base-200/50 font-mono" />
+        </label>`;
+
+        const imagePath = effectiveImage(record);
+        const src = imagePath ? editorImageUrl(imagePath) : '';
+        const hasSpot = ['x', 'y', 'w', 'h'].every((key) => typeof spot[key] === 'number');
+
+        return `<div>
+          <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
+          <div class="flex flex-wrap gap-2">${part('x', 'x')}${part('y', 'y')}${part('w', 'w')}${part('h', 'h')}</div>
+
+          <div class="mt-2 overflow-hidden rounded-xl bg-base-200/40" data-hotspot-preview>
+            <div class="relative">
+              <img data-hotspot-img ${src ? `src="${escapeHtml(src)}"` : ''} alt=""
+                class="block w-full ${imagePath ? '' : 'hidden'}"
+                onerror="this.classList.add('hidden');this.parentElement.querySelector('[data-hotspot-schematic]')?.classList.remove('hidden')" />
+              <div data-hotspot-schematic class="aspect-[16/9] p-3 ${imagePath ? 'hidden' : ''}">
+                <div class="flex h-full gap-2">
+                  <div class="flex w-1/5 flex-col gap-1.5 rounded-xl bg-base-200/70 p-1.5">
+                    <div class="h-1.5 w-4/5 rounded-full bg-base-100/80"></div>
+                    <div class="h-1.5 w-3/5 rounded-full bg-base-100/60"></div>
+                    <div class="h-1.5 w-4/5 rounded-full bg-base-100/60"></div>
+                  </div>
+                  <div class="flex-1 space-y-2">
+                    <div class="h-2.5 w-2/5 rounded-full bg-base-300/50"></div>
+                    <div class="h-2 w-full rounded-full bg-base-300/30"></div>
+                    <div class="h-2 w-11/12 rounded-full bg-base-300/30"></div>
+                    <div class="h-2 w-9/12 rounded-full bg-base-300/30"></div>
+                  </div>
+                </div>
+              </div>
+              <div data-hotspot-overlay
+                class="absolute touch-none rounded-md ${hasSpot ? 'cursor-move bg-primary/20 ring-2 ring-primary' : 'cursor-move border-2 border-dashed border-primary/50 bg-primary/10'}"
+                style="left:${hasSpot ? spot.x : 10}%;top:${hasSpot ? spot.y : 10}%;width:${hasSpot ? spot.w : 20}%;height:${hasSpot ? spot.h : 10}%">
+                <span data-hotspot-handle class="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize rounded-sm bg-primary ring-2 ring-base-100"></span>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }
+
+      return `<label class="block">
+        <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
+        <input data-field="${field.k}" value="${escapeHtml(Array.isArray(value) ? value.join(', ') : value ?? '')}"
+          placeholder="${field.placeholder ?? ''}"${req}
+          class="input w-full bg-base-200/50 ${field.k === 'id' ? 'font-mono' : ''}" />
+      </label>`;
+    }
+
+    function renderForm() {
+      const record = current();
+      if (!record) {
+        el.form.innerHTML = '<p class="py-10 text-center text-sm text-base-content/40">左侧选一条记录，或点 + 新建</p>';
+        return;
+      }
+
+      const hint = `<div class="flex items-center justify-between border-b border-base-200 pb-3">
+        <span class="font-mono text-[12px] text-base-content/50">${escapeHtml(record.id ?? '')}</span>
+        <button type="button" data-action="delete" class="btn btn-xs btn-ghost text-error">删除</button>
+      </div>`;
+
+      const derived =
+        state.collection === 'functions' || state.collection === 'behaviors'
+          ? derivedConceptsHtml(record)
+          : state.collection === 'screens'
+            ? derivedRouteHtml(record)
+            : '';
+
+      el.form.innerHTML = hint + fields().map((field) => fieldHtml(field, record)).join('') + derived;
+    }
+
+    /** 界面路径由亲界面推导，只读展示 */
+    function derivedRouteHtml(record) {
+      const parent = (state.data.screens ?? []).find((item) => item.id === record.parent);
+      const route = parent ? `${parent.name} → ${record.name ?? ''}` : (record.name ?? '');
+      return `<div class="rounded-xl bg-base-200/40 p-3">
+        <p class="text-[11px] text-base-content/50">界面路径（由亲界面自动生成，只读）</p>
+        <p class="mt-1 text-[13px]">${escapeHtml(route || '（先填名称）')}</p>
+      </div>`;
+    }
+
+    /** 概念不手工填：功能取行为的并集，行为取原子操作的并集，这里只读展示 */
+    function derivedConceptsHtml(record) {
+      const opIds =
+        state.collection === 'functions'
+          ? (record.behaviors ?? []).flatMap((behaviorId) => {
+              const behavior = (state.data.behaviors ?? []).find((item) => item.id === behaviorId);
+              return behavior?.ops ?? [];
+            })
+          : (record.ops ?? []);
+
+      const seen = [];
+      for (const opId of opIds) {
+        const op = (state.data.ops ?? []).find((item) => item.id === opId);
+        for (const keyword of op?.keywords ?? []) {
+          if (!seen.includes(keyword)) seen.push(keyword);
+        }
+      }
+
+      const chips = seen
+        .map((id) => {
+          const concept = (state.data.concepts ?? []).find((item) => item.id === id);
+          return `<span class="rounded-full bg-base-200 px-2 py-0.5 text-[11px]">${escapeHtml(concept?.title ?? id)}</span>`;
+        })
+        .join('');
+
+      return `<div class="rounded-xl bg-base-200/40 p-3">
+        <p class="text-[11px] text-base-content/50">概念聚合（由下级内容自动汇总，只读）</p>
+        <div class="mt-1.5 flex flex-wrap gap-1">${chips || '<span class="text-[11px] text-base-content/40">（行为里还没有关键字）</span>'}</div>
+      </div>`;
+    }
+
+    function render() {
+      renderTabs();
+      renderList();
+      renderForm();
+    }
+
+    function setPath(record, path, value) {
+      if (!path.includes('.')) {
+        record[path] = value;
+        return;
+      }
+      const [head, tail] = path.split('.');
+      record[head] = { ...(record[head] ?? {}), [tail]: value };
+      const spot = record[head];
+      if (['x', 'y', 'w', 'h'].every((key) => spot[key] === undefined || spot[key] === '')) {
+        delete record[head];
+      }
+    }
+
+    /** 选中哪条，就把哪条所在的分组展开，其余收起 */
+    function syncExpandedGroup() {
+      const record = current();
+      state.expandedGroup = record?.screen ?? null;
+    }
+
+    el.tabs.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-tab]');
+      if (!button) return;
+      state.collection = button.dataset.tab;
+      state.selectedId = records()[0]?.id ?? null;
+      syncExpandedGroup();
+      render();
+    });
+
+    el.list.addEventListener('click', (event) => {
+      const group = event.target.closest('[data-group]');
+      if (group) {
+        const key = group.getAttribute('data-group');
+        state.expandedGroup = state.expandedGroup === key ? null : key;
+        renderList();
+        return;
+      }
+
+      const button = event.target.closest('[data-record]');
+      if (!button) return;
+      state.selectedId = button.dataset.record;
+      syncExpandedGroup();
+      renderList();
+      renderForm();
+    });
+
+    el.filter.addEventListener('input', () => {
+      state.filter = el.filter.value;
+      renderList();
+    });
+
+    el.add.addEventListener('click', () => {
+      const collection = COLLECTIONS.find((item) => item.key === state.collection);
+      const record = { id: `new-${state.collection}-${Date.now().toString(36)}` };
+      for (const field of fields()) {
+        if (field.type === 'refs' || field.type === 'refseq') record[field.k] = [];
+      }
+      state.data[state.collection].push(record);
+      state.selectedId = record.id;
+      syncExpandedGroup();
+      markDirty();
+      render();
+    });
+
+    el.form.addEventListener('submit', (event) => event.preventDefault());
+
+    el.form.addEventListener('input', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
+      if (target.type === 'checkbox') return;
+
+      // 列表输入（别名这类）：就地改数组元素，不重绘，避免丢焦点
+      const listField = target.dataset.list;
+      if (listField) {
+        const record = current();
+        const index = Number(target.dataset.index);
+        if (record && Array.isArray(record[listField])) {
+          record[listField][index] = target.value;
+          markDirty();
+        }
+        return;
+      }
+
+      const field = target.dataset.field;
+      if (!field) return;
+
+      const record = current();
+      if (!record) return;
+
+      const def = fields().find((item) => item.k === field.split('.')[0]);
+
+      if (def?.type === 'hotspot' || def?.type === 'number') {
+        setPath(record, field, target.value === '' ? undefined : Number(target.value));
+        updateHotspotPreview(record);
+      } else setPath(record, field, target.value);
+
+      if (field === 'image') updatePreviewImage(record);
+      if (field === 'id') state.selectedId = record.id;
+      if (field === 'id' || field === 'screen') syncExpandedGroup();
+      markDirty();
+      renderList();
+      // 换界面会影响可用截图 / 可选原子操作，重绘一次表单
+      if (field === 'screen') renderForm();
+    });
+
+    /** 改了截图路径就换预览图；没有图就退回骨架 */
+    function updatePreviewImage(record) {
+      const img = el.form.querySelector('[data-hotspot-img]');
+      const schematic = el.form.querySelector('[data-hotspot-schematic]');
+      if (!img || !schematic) return;
+
+      const path = effectiveImage(record);
+      if (path) {
+        img.setAttribute('src', editorImageUrl(path));
+        img.classList.remove('hidden');
+        schematic.classList.add('hidden');
+      } else {
+        img.removeAttribute('src');
+        img.classList.add('hidden');
+        schematic.classList.remove('hidden');
+      }
+      updateHotspotPreview(record);
+    }
+
+    /** 高亮框跟着四个数字实时走 */
+    function updateHotspotPreview(record) {
+      const overlay = el.form.querySelector('[data-hotspot-overlay]');
+      if (!overlay) return;
+
+      const spot = record.hotspot ?? {};
+      const ready = ['x', 'y', 'w', 'h'].every((key) => typeof spot[key] === 'number');
+      const box = ready ? spot : { x: 10, y: 10, w: 20, h: 10 };
+
+      overlay.style.left = `${box.x}%`;
+      overlay.style.top = `${box.y}%`;
+      overlay.style.width = `${box.w}%`;
+      overlay.style.height = `${box.h}%`;
+
+      overlay.classList.toggle('bg-primary/20', ready);
+      overlay.classList.toggle('ring-2', ready);
+      overlay.classList.toggle('ring-primary', ready);
+      overlay.classList.toggle('border-2', !ready);
+      overlay.classList.toggle('border-dashed', !ready);
+      overlay.classList.toggle('border-primary/50', !ready);
+      overlay.classList.toggle('bg-primary/10', !ready);
+    }
+
+    /** 把拖出来的数字同步回四个输入框 */
+    function syncHotspotInputs(record) {
+      const spot = record.hotspot ?? {};
+      for (const key of ['x', 'y', 'w', 'h']) {
+        const input = el.form.querySelector(`[data-field="hotspot.${key}"]`);
+        if (input) input.value = spot[key] ?? '';
+      }
+    }
+
+    let hotspotDrag = null;
+    const clampPercent = (value, min, max) => Math.min(max, Math.max(min, value));
+    const round1 = (value) => Math.round(value * 10) / 10;
+
+    el.form.addEventListener('pointerdown', (event) => {
+      const handle = event.target.closest('[data-hotspot-handle]');
+      const overlay = event.target.closest('[data-hotspot-overlay]');
+      if (!handle && !overlay) return;
+
+      const record = current();
+      const box = el.form.querySelector('[data-hotspot-preview] .relative');
+      if (!record || !box) return;
+
+      const rect = box.getBoundingClientRect();
+      hotspotDrag = {
+        record,
+        mode: handle ? 'resize' : 'move',
+        width: rect.width,
+        height: rect.height,
+        startX: event.clientX,
+        startY: event.clientY,
+        start: { x: 10, y: 10, w: 20, h: 10, ...(record.hotspot ?? {}) },
+      };
+
+      event.preventDefault();
+    });
+
+    window.addEventListener('pointermove', (event) => {
+      if (!hotspotDrag) return;
+      const { record, mode, width, height, startX, startY, start } = hotspotDrag;
+      const dx = ((event.clientX - startX) / width) * 100;
+      const dy = ((event.clientY - startY) / height) * 100;
+
+      const next =
+        mode === 'move'
+          ? {
+              x: round1(clampPercent(start.x + dx, 0, 100 - start.w)),
+              y: round1(clampPercent(start.y + dy, 0, 100 - start.h)),
+              w: start.w,
+              h: start.h,
+            }
+          : {
+              x: start.x,
+              y: start.y,
+              w: round1(clampPercent(start.w + dx, 1, 100 - start.x)),
+              h: round1(clampPercent(start.h + dy, 1, 100 - start.y)),
+            };
+
+      record.hotspot = next;
+      updateHotspotPreview(record);
+      syncHotspotInputs(record);
+      markDirty();
+    });
+
+    window.addEventListener('pointerup', () => {
+      hotspotDrag = null;
+    });
+
+    window.addEventListener('pointercancel', () => {
+      hotspotDrag = null;
+    });
+
+    el.form.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+
+      const field = target.dataset.field;
+      const record = current();
+      if (!field || !record) return;
+
+      record[field] = [...el.form.querySelectorAll(`input[type=checkbox][data-field="${field}"]:checked`)].map((input) => input.value);
+      markDirty();
+      renderList();
+    });
+
+    el.form.addEventListener('click', (event) => {
+      // 列表输入：增行 / 删行
+      const addRow = event.target.closest('[data-list-add]');
+      if (addRow) {
+        const field = addRow.getAttribute('data-list-add');
+        const record = current();
+        if (record && field) {
+          record[field] = [...(record[field] ?? []), ''];
+          markDirty();
+          renderForm();
+          const inputs = el.form.querySelectorAll(`[data-list="${field}"]`);
+          inputs[inputs.length - 1]?.focus();
+        }
+        return;
+      }
+
+      const removeRow = event.target.closest('[data-list-remove]');
+      if (removeRow) {
+        const field = removeRow.getAttribute('data-list-remove');
+        const index = Number(removeRow.dataset.index);
+        const record = current();
+        if (record && field && Array.isArray(record[field])) {
+          record[field].splice(index, 1);
+          markDirty();
+          renderForm();
+        }
+        return;
+      }
+
+      const orderButton = event.target.closest('[data-order]');
+      if (orderButton) {
+        const record = current();
+        if (!record) return;
+
+        const field = orderButton.dataset.field;
+        const index = Number(orderButton.dataset.index ?? -1);
+        const list = Array.isArray(record[field]) ? [...record[field]] : [];
+        const action = orderButton.dataset.order;
+
+        if (action === 'up' && index > 0) {
+          [list[index - 1], list[index]] = [list[index], list[index - 1]];
+        } else if (action === 'down' && index >= 0 && index < list.length - 1) {
+          [list[index], list[index + 1]] = [list[index + 1], list[index]];
+        } else if (action === 'remove' && index >= 0) {
+          list.splice(index, 1);
+        } else if (action === 'add') {
+          const select = el.form.querySelector(`[data-add-for="${field}"]`);
+          const value = select instanceof HTMLSelectElement ? select.value : '';
+          if (value) list.push(value);
+        }
+
+        record[field] = list;
+        markDirty();
+        renderForm();
+        return;
+      }
+
+      const button = event.target.closest('[data-action="delete"]');
+      if (!button) return;
+
+      const record = current();
+      if (!record) return;
+      if (!window.confirm(`删除 ${record.id}？`)) return;
+
+      state.data[state.collection] = records().filter((item) => item.id !== record.id);
+      state.selectedId = records()[0]?.id ?? null;
+      syncExpandedGroup();
+      markDirty();
+      render();
+    });
+
+    function validate() {
+      const problems = [];
+      const ids = {};
+
+      for (const collection of COLLECTIONS) {
+        ids[collection.key] = new Set();
+        for (const record of state.data[collection.key] ?? []) {
+          if (!record.id) problems.push(`${collection.label}：有一条记录缺少 id`);
+          else if (ids[collection.key].has(record.id)) problems.push(`${collection.label}：id 重复 ${record.id}`);
+          ids[collection.key].add(record.id);
+
+          for (const field of FIELDS[collection.key] ?? []) {
+            if (field.type === 'ref' && record[field.k] && !ids[field.ref].has(record[field.k])) {
+              problems.push(`${collection.label} ${record.id}：${field.label} 指向不存在的 ${record[field.k]}`);
+            }
+            if (field.type === 'refs' || field.type === 'refseq') {
+              for (const value of record[field.k] ?? []) {
+                if (!ids[field.ref].has(value)) {
+                  problems.push(`${collection.label} ${record.id}：${field.label} 指向不存在的 ${value}`);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      return problems;
+    }
+
+    function showProblems(problems) {
+      if (problems.length === 0) {
+        el.problems.classList.add('hidden');
+        el.problems.innerHTML = '';
+        return;
+      }
+      el.problems.classList.remove('hidden');
+      el.problems.innerHTML = `<p class="mb-1 font-semibold">发现 ${problems.length} 个问题，先修掉再导出：</p><ul class="list-disc pl-5">${problems
+        .map((problem) => `<li>${escapeHtml(problem)}</li>`)
+        .join('')}</ul>`;
+    }
+
+    el.exportBtn.addEventListener('click', () => {
+      const problems = validate();
+      showProblems(problems);
+      if (problems.length > 0) return;
+
+      const bundle = { version: 1, exportedAt: new Date().toISOString(), ...state.data };
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'goodsbar-content.json';
+      link.click();
+      URL.revokeObjectURL(link.href);
+
+      state.dirty = false;
+      el.dirty?.classList.add('hidden');
+    });
+
+    el.importInput.addEventListener('change', async () => {
+      const file = el.importInput.files?.[0];
+      if (!file) return;
+      try {
+        const parsed = JSON.parse(await file.text());
+        const next = {};
+        for (const collection of COLLECTIONS) {
+          next[collection.key] = Array.isArray(parsed[collection.key]) ? parsed[collection.key] : [];
+        }
+        state.data = next;
+        state.selectedId = records()[0]?.id ?? null;
+        syncExpandedGroup();
+        markDirty();
+        showProblems([]);
+        render();
+      } catch (error) {
+        showProblems([`导入失败：${error instanceof Error ? error.message : String(error)}`]);
+      }
+    });
+
+    state.selectedId = records()[0]?.id ?? null;
+    syncExpandedGroup();
+    render();
+    console.info('editor ready', DATA_PATH);
+  </script>
+</Base>

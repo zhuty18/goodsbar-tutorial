@@ -1,0 +1,30 @@
+# 标签词典：id 是聚合用的键（小写英文 slug），label 是页面上显示的名字。
+# 自定义位标签必须在这里登记，没登记的标签会在构建期报错。
+
+- id: default-off
+  label: 默认关闭
+  description: 默认筛选条件里不含这一项，需要手动打开。
+
+- id: frequent
+  label: 高频操作
+  description: 门店每天都要用到的动作。
+
+- id: irreversible
+  label: 不可撤销
+  description: 操作会写入历史数据，没有撤销入口。
+
+- id: locked-after-submit
+  label: 提交后锁定
+  description: 一旦提交就不能回头改，只能新建。
+
+- id: permission-required
+  label: 需要权限
+  description: 普通账号看不到这个入口。
+
+- id: recommended
+  label: 推荐做法
+  description: 有更省事的替代路径时，优先走这条。
+
+- id: reversible
+  label: 可恢复
+  description: 之后可以撤回，不会丢数据。

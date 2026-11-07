@@ -1,0 +1,41 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getGraph, conceptUrl } from '../../lib/graph';
+import { conceptUsage } from '../../lib/compose';
+
+const graph = getGraph();
+const concepts = [...graph.concepts.values()].sort((a, b) => conceptUsage(graph, b.id) - conceptUsage(graph, a.id));
+---
+
+<Base title="概念词典 · GoodsBar 使用手册" description="GoodsBar 中需要单独解释的术语。">
+  <header class="mb-8 max-w-2xl">
+    <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-secondary">概念词典</p>
+    <h1 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">这些词值得单独解释</h1>
+    <p class="mt-3 text-[15px] leading-relaxed text-base-content/65">
+      说明书里每次提到一个概念，都可以点进来看定义。反过来说，每一条定义下面都能找到「它在哪些功能的哪一步被用到」——孤立的概念说明是没人看的。
+    </p>
+  </header>
+
+  <div class="grid gap-3 sm:grid-cols-2">
+    {
+      concepts.map((concept) => (
+        <a
+          href={conceptUrl(concept.id)}
+          class="card group rounded-3xl bg-base-100 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:shadow-md"
+        >
+          <div class="card-body gap-2 p-5">
+            <h2 class="text-base font-semibold transition-colors group-hover:text-secondary">
+              {concept.title}
+            </h2>
+            <p class="text-sm leading-relaxed text-base-content/65">{concept.summary}</p>
+            {concept.aliases.length > 0 && (
+              <p class="mt-auto pt-1 text-[11px] text-base-content/40">
+                又称：{concept.aliases.join(' / ')}
+              </p>
+            )}
+          </div>
+        </a>
+      ))
+    }
+  </div>
+</Base>

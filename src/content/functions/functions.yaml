@@ -1,0 +1,33 @@
+# 功能：一个「使用需求」（Q）。页面标题就是 question。
+# category 指向功能分类（见 categories/categories.yaml）。
+# behaviors 是有序的。概念不用在这里写：它由行为里的原子操作关键字自动汇总。
+
+- id: add-product
+  question: 新到的货，怎么录入系统并上架？
+  summary: 从商品列表发起新建，在编辑页补齐档案，最后设好售价与期初库存完成上架。
+  category: goods
+  behaviors: [open-create, fill-profile, publish-product]
+
+- id: checkout-discount
+  question: 老客户结账时，怎么给到合适的折扣？
+  summary: 结算台先认会员，再由系统按优先级挑一条最省钱的规则；人工改价是兜底。
+  category: checkout
+  behaviors: [pick-member, apply-discount]
+
+- id: offline-report
+  question: 商品下架了，还能查到它的历史销量吗？
+  summary: 下架只是列表的默认过滤。报表里勾一下「包含已下架商品」，历史一条不少。
+  category: report
+  behaviors: [show-offline, open-history]
+
+- id: pause-selling
+  question: 某个商品暂时不卖了，怎么停售又不丢数据？
+  summary: 用「下架」而不是「删除」。下架后收银台扫不出来，但流水、库存、评价都保留。
+  category: goods
+  behaviors: [offline-product]
+
+- id: stock-take
+  question: 库存和实物对不上，怎么盘点并调平？
+  summary: 建盘点单 → 逐项点数 → 提交生成调平流水。盘点不改历史，只补差额。
+  category: stock
+  behaviors: [create-take, count-and-commit]

@@ -1,0 +1,270 @@
+---
+import Base from '../layouts/Base.astro';
+import { getGraph, conceptUrl, functionUrl, opImage } from '../lib/graph';
+import { layoutConceptGraph } from '../lib/conceptGraph';
+
+const graph = getGraph();
+const concepts = [...graph.concepts.values()];
+const { warnings, coverage } = graph;
+const conceptLayout = layoutConceptGraph(graph);
+
+const rules = [
+  {
+    title: '引用完整性',
+    detail:
+      '所有 id 引用都必须能解析到真实实体：原子操作的界面与关键字、行为的界面与标签、功能的步骤与分类、概念之间的关联。',
+  },
+  {
+    title: '不跨界面',
+    detail:
+      '同一个行为里的原子操作必须属于该行为的界面；界面最多两级，父界面必须是一级界面。用编辑器不会违反，但手改 YAML 时值得拦一下。',
+  },
+];
+
+const WARNING_LABELS = {
+  image: '缺少截图',
+  hotspot: '缺少高亮',
+  concept: '概念没人用',
+  tag: '标签没人用',
+  category: '分类没人用',
+} as const;
+
+const WARNING_ORDER = ['image', 'hotspot', 'concept', 'tag', 'category'] as const;
+
+const sortedWarnings = [...warnings].sort(
+  (a, b) => WARNING_ORDER.indexOf(a.kind) - WARNING_ORDER.indexOf(b.kind),
+);
+
+const screens = [...graph.screens.values()];
+const rootScreens = screens.filter((screen) => !screen.parent).length;
+const opsWithShot = [...graph.ops.values()].filter((op) => Boolean(opImage(graph, op))).length;
+const shotFiles = [...graph.shots.values()].reduce((total, list) => total + list.length, 0);
+const screensWithShot = screens.filter((screen) => (graph.shots.get(screen.id) ?? []).length > 0).length;
+
+const entries = [
+  { label: '界面', value: screens.length, hint: `一级 ${rootScreens} / 二级 ${screens.length - rootScreens}` },
+  { label: '原子操作', value: graph.ops.size },
+  { label: '行为', value: graph.behaviors.size },
+  { label: '功能', value: graph.functions.length },
+  { label: '概念', value: graph.concepts.size },
+  { label: '标签', value: graph.tags.size },
+  { label: '分类', value: graph.categories.size },
+];
+
+const shots = [
+  { label: '截图文件', value: shotFiles, hint: 'public/shots/' },
+  { label: '覆盖界面', value: screensWithShot, hint: `共 ${screens.length} 个` },
+  { label: '已配图操作', value: opsWithShot, hint: `共 ${graph.ops.size} 个` },
+];
+---
+
+<Base title="内容体检 · GoodsBar 使用手册" description="构建期跑的内容一致性检查。" noindex>
+  <header class="mb-8 max-w-2xl">
+    <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-secondary">内容体检</p>
+    <h1 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">数据是不是还对得上</h1>
+    <p class="mt-3 text-[15px] leading-relaxed text-base-content/65">
+      硬校验跑在 <code class="rounded bg-base-100 px-1.5 py-0.5 font-mono text-[13px]">getGraph()</code> 里，
+      构建时先过一遍，不过就构建失败；后面的警告和数据统计只提示、不阻断。
+    </p>
+  </header>
+
+  <section class="mb-8">
+    <h2 class="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">硬校验</h2>
+    <ul class="grid gap-2 sm:grid-cols-2">
+      {
+        rules.map((rule) => (
+          <li class="flex gap-3 rounded-2xl bg-base-100 p-4 shadow-xs">
+            <span class="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-success/15 text-success">
+              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m5 13 4 4L19 7" />
+              </svg>
+            </span>
+            <div>
+              <p class="text-sm font-medium">{rule.title}</p>
+              <p class="mt-1 text-[13px] leading-relaxed text-base-content/60">{rule.detail}</p>
+            </div>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  <section class="mb-8">
+    <h2 class="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">警告</h2>
+
+    {
+      sortedWarnings.length === 0 ? (
+        <div class="flex items-center gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-base-content/70">
+          <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-success" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m5 13 4 4L19 7" />
+          </svg>
+          没有需要处理的事项。
+        </div>
+      ) : (
+        <ul class="space-y-1.5">
+          {sortedWarnings.map((warning) => (
+            <li class="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl bg-base-100 px-3 py-2 shadow-xs">
+              <span class="shrink-0 rounded-full bg-warning/25 px-2 py-0.5 text-[10px] font-semibold text-base-content/70">
+                {WARNING_LABELS[warning.kind]}
+              </span>
+              <span class="text-[13px]">{warning.title}</span>
+              <span class="font-mono text-[11px] text-base-content/40">{warning.id}</span>
+              <span class="ml-auto font-mono text-[11px] text-base-content/40">{warning.location}</span>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </section>
+
+  <section class="mb-8">
+    <h2 class="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">数据统计</h2>
+
+    <div class="grid gap-3 lg:grid-cols-[2fr_1fr]">
+      <div class="rounded-3xl bg-base-100 p-4 shadow-xs">
+        <p class="mb-2 text-[11px] text-base-content/40">条目</p>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-4">
+          {
+            entries.map((item) => (
+              <div class="rounded-2xl bg-base-200/50 px-3 py-2.5">
+                <p class="font-mono text-xl font-semibold tabular-nums">{item.value}</p>
+                <p class="text-[11px] text-base-content/50">{item.label}</p>
+                {item.hint && <p class="mt-0.5 text-[10px] text-base-content/35">{item.hint}</p>}
+              </div>
+            ))
+          }
+        </div>
+      </div>
+
+      <div class="rounded-3xl bg-base-100 p-4 shadow-xs">
+        <p class="mb-2 text-[11px] text-base-content/40">图片</p>
+        <div class="grid gap-2">
+          {
+            shots.map((item) => (
+              <div class="flex items-baseline gap-3 rounded-2xl bg-base-200/50 px-3 py-2.5">
+                <span class="font-mono text-xl font-semibold tabular-nums">{item.value}</span>
+                <span class="text-[11px] text-base-content/50">{item.label}</span>
+                <span class="ml-auto text-[10px] text-base-content/35">{item.hint}</span>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mb-8">
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <h2 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+        功能 × 概念矩阵
+      </h2>
+      <p class="text-[11px] text-base-content/40">行是功能，列是概念；● 表示该功能涉及这个概念</p>
+    </div>
+
+    <div class="overflow-x-auto rounded-3xl bg-base-100 shadow-xs">
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <th class="sticky left-0 z-10 bg-base-100 text-[11px] font-medium text-base-content/50">功能</th>
+            {
+              concepts.map((concept) => (
+                <th class="text-center">
+                  <a href={conceptUrl(concept.id)} class="link link-hover text-[11px] font-medium">
+                    {concept.title}
+                  </a>
+                </th>
+              ))
+            }
+          </tr>
+        </thead>
+        <tbody>
+          {
+            graph.functions.map((fn) => {
+              const used = coverage.find((item) => item.fnId === fn.id)?.declared ?? [];
+              return (
+                <tr>
+                  <td class="sticky left-0 z-10 max-w-[260px] whitespace-normal bg-base-100">
+                    <a href={functionUrl(fn.id)} class="link link-hover text-[12px] leading-snug">
+                      {fn.question}
+                    </a>
+                  </td>
+                  {concepts.map((concept) => (
+                    <td class="text-center">
+                      {used.includes(concept.id) ? (
+                        <span class="text-success" aria-label="涉及">●</span>
+                      ) : (
+                        <span class="text-base-content/15" aria-label="不涉及">·</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <h2 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+        概念关联图谱
+      </h2>
+      <p class="text-[11px] text-base-content/40">
+        实线 = 同一功能里同时出现，虚线 = 词条里手工关联；节点越大，关联越多
+      </p>
+    </div>
+
+    <div class="overflow-x-auto rounded-3xl bg-base-100 p-4 shadow-xs">
+      <svg
+        viewBox={`0 0 ${conceptLayout.width} ${conceptLayout.height}`}
+        class="h-auto w-full min-w-[600px]"
+        role="img"
+        aria-label="概念关联图谱"
+      >
+        <g>
+          {
+            conceptLayout.edges.map((edge) => (
+              <line
+                x1={edge.x1}
+                y1={edge.y1}
+                x2={edge.x2}
+                y2={edge.y2}
+                class={edge.kind === 'related' ? 'stroke-secondary/40' : 'stroke-base-content/25'}
+                stroke-width={Math.min(1 + edge.weight * 0.6, 3)}
+                stroke-dasharray={edge.kind === 'related' ? '5 5' : undefined}
+                stroke-linecap="round"
+              />
+            ))
+          }
+        </g>
+
+        <g>
+          {
+            conceptLayout.nodes.map((node) => (
+              <g>
+                <circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={node.radius}
+                  class="fill-primary/20 stroke-primary/60"
+                  stroke-width="1.5"
+                />
+                <text
+                  x={node.x}
+                  y={node.y + node.radius + 15}
+                  text-anchor="middle"
+                  font-size="12"
+                  class="fill-base-content/75"
+                >
+                  {node.label}
+                </text>
+              </g>
+            ))
+          }
+        </g>
+      </svg>
+    </div>
+  </section>
+</Base>

@@ -1,0 +1,203 @@
+---
+import '../styles/global.css';
+import { withBase, stripBase } from '../lib/url';
+
+interface Props {
+  title: string;
+  description?: string;
+  /** 面向内部的页面（如内容体检），不进导航也不让搜索引擎收 */
+  noindex?: boolean;
+}
+
+const {
+  title,
+  description = '以使用需求驱动的 GoodsBar 手册：选一件你想做的事，页面会按行为与原子操作自动拼出来。',
+  noindex = false,
+} = Astro.props;
+
+const path = stripBase(Astro.url.pathname).replace(/\/+$/, '') || '/';
+
+const nav = [
+  { href: withBase('/'), label: '按需求找功能', icon: 'search' },
+  { href: withBase('/concepts'), label: '概念词典', icon: 'book' },
+  { href: withBase('/screens'), label: '界面一览', icon: 'window' },
+];
+
+const FEEDBACK = 'https://f.kdocs.cn/g/uZtbQnv4/';
+
+const icons: Record<string, string> = {
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/>',
+  window: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+  check: '<path d="m5 13 4 4L19 7"/>',
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/>',
+};
+
+const isActive = (href: string) => {
+  const bare = stripBase(href).replace(/\/+$/, '') || '/';
+  return bare === '/' ? path === '/' : path === bare || path.startsWith(`${bare}/`);
+};
+
+/** 收起态只留图标，悬浮或当前页展开为「底色 + 图标 + 名称」 */
+const pill = (active: boolean) =>
+  [
+    'group flex h-9 items-center rounded-full transition-colors duration-200',
+    active
+      ? 'bg-primary/20 font-medium text-base-content'
+      : 'text-base-content/55 hover:bg-base-content/10 hover:text-base-content',
+  ].join(' ');
+
+const labelWrap = (active: boolean) =>
+  [
+    'grid overflow-hidden transition-[grid-template-columns] duration-200 ease-out',
+    active ? 'grid-cols-[1fr]' : 'grid-cols-[0fr] group-hover:grid-cols-[1fr]',
+  ].join(' ');
+---
+
+<!doctype html>
+<html lang="zh-CN" data-theme="bumblebee">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+    {noindex && <meta name="robots" content="noindex, nofollow" />}
+    <link rel="icon" type="image/png" href={withBase('/favicon.png')} />
+    <link rel="apple-touch-icon" href={withBase('/favicon.png')} />
+    <script is:inline>
+      (() => {
+        try {
+          const saved = localStorage.getItem('gbt-theme');
+          const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          document.documentElement.dataset.theme = saved || (prefersDark ? 'luxury' : 'bumblebee');
+        } catch {}
+      })();
+    </script>
+  </head>
+
+  <body class="min-h-screen bg-base-200 text-base-content antialiased">
+    <header class="sticky top-0 z-40 border-b border-base-300/50 bg-base-100/80 backdrop-blur">
+      <div class="mx-auto w-full max-w-6xl px-4 sm:px-6">
+        <div class="flex h-14 items-center gap-3">
+          <a href={withBase('/')} class="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight">
+            <img
+              src={withBase('/favicon.png')}
+              alt=""
+              width="28"
+              height="28"
+              class="h-7 w-7 shrink-0 rounded-xl object-cover"
+            />
+            <span class="hidden sm:inline">GoodsBar 使用手册</span>
+            <span class="sm:hidden">GoodsBar</span>
+          </a>
+
+          <nav class="ml-auto hidden items-center gap-0.5 md:flex">
+            {
+              nav.map((item) => (
+                <a href={item.href} class={pill(isActive(item.href))} aria-current={isActive(item.href) ? 'page' : undefined}>
+                  <span class="grid h-9 w-9 shrink-0 place-items-center">
+                    <svg
+                      viewBox="0 0 24 24"
+                      class="h-4.5 w-4.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.7"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                      set:html={icons[item.icon]}
+                    />
+                  </span>
+                  <span class={labelWrap(isActive(item.href))}>
+                    <span class="min-w-0 overflow-hidden">
+                      <span class="block whitespace-nowrap pr-4 text-[13px] font-normal">{item.label}</span>
+                    </span>
+                  </span>
+                </a>
+              ))
+            }
+          </nav>
+
+          <button
+            id="theme-toggle"
+            type="button"
+            class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full text-base-content/55 transition-colors hover:bg-base-content/10 hover:text-base-content md:ml-2"
+            aria-label="切换深浅主题"
+            title="切换深浅主题"
+          >
+            <svg class="theme-icon-moon h-4.5 w-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+            </svg>
+            <svg class="theme-icon-sun h-4.5 w-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+            </svg>
+          </button>
+        </div>
+
+        <nav class="flex items-center gap-1 overflow-x-auto pb-2.5 md:hidden">
+          {
+            nav.map((item) => (
+              <a
+                href={item.href}
+                class:list={[
+                  'flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs transition-colors active:bg-base-content/10',
+                  isActive(item.href)
+                    ? 'bg-primary/20 font-medium text-base-content'
+                    : 'text-base-content/55',
+                ]}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  class="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                  set:html={icons[item.icon]}
+                />
+                {item.label}
+              </a>
+            ))
+          }
+        </nav>
+      </div>
+    </header>
+
+    <main class="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6">
+      <slot />
+    </main>
+
+    <footer class="bg-base-100/60">
+      <div class="mx-auto grid w-full max-w-6xl gap-2 px-4 py-8 text-xs leading-relaxed text-base-content/50 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-6">
+        <p class="min-w-0 break-words">
+          GoodsBar 说明手册（app v1.4.3）
+        </p>
+        <a
+          href={FEEDBACK}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="justify-self-start whitespace-nowrap text-[11px] text-base-content/80 underline decoration-base-content/25 underline-offset-4 transition-colors hover:text-base-content hover:decoration-base-content/60 sm:justify-self-end"
+        >
+          手册有问题？点这里反馈
+        </a>
+      </div>
+    </footer>
+
+    <script>
+      const toggle = document.getElementById('theme-toggle');
+      const root = document.documentElement;
+
+      toggle?.addEventListener('click', () => {
+        const next = root.dataset.theme === 'luxury' ? 'bumblebee' : 'luxury';
+        root.dataset.theme = next;
+        try {
+          localStorage.setItem('gbt-theme', next);
+        } catch {}
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,175 @@
+---
+import Base from '../../layouts/Base.astro';
+import ScreenFrame from '../../components/ScreenFrame.astro';
+import ConceptNote from '../../components/ConceptNote.astro';
+import { getGraph, findFunction, conceptUrl, functionUrl, screenUrl, assetUrl, opImage } from '../../lib/graph';
+import { composeFunction, relatedFunctions } from '../../lib/compose';
+import { SCREEN_SLOT } from '../../lib/tags';
+import { withBase } from '../../lib/url';
+
+export function getStaticPaths() {
+  const graph = getGraph();
+  return graph.functions.map((fn) => ({ params: { id: fn.id } }));
+}
+
+const { id } = Astro.params;
+const graph = getGraph();
+const page = composeFunction(graph, findFunction(graph, id!));
+
+const related = relatedFunctions(graph, page.fn);
+
+/** 没单独指定就用所属界面的默认截图 */
+const shotOf = (op: (typeof page.steps)[number]['op']) => {
+  const shot = opImage(graph, op);
+  return shot ? assetUrl(shot) : undefined;
+};
+---
+
+<Base title={`${page.fn.question} · GoodsBar 使用手册`} description={page.fn.summary}>
+  <article>
+    <header class="mb-7">
+      <a href={withBase('/')} class="link link-hover text-xs text-base-content/50">← 全部需求</a>
+
+      <div class="mt-4 flex items-start gap-3">
+        <span
+          class="mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-sm font-semibold text-primary-content"
+          title={page.category.label}
+        >
+          {page.category.label.charAt(0)}
+        </span>
+        <h1 class="text-2xl font-bold leading-snug tracking-tight sm:text-3xl">{page.fn.question}</h1>
+      </div>
+
+      <p class="mt-4 max-w-3xl text-[15px] leading-relaxed text-base-content/70">{page.fn.summary}</p>
+    </header>
+
+    <section class="mb-6 rounded-3xl bg-base-100 p-5 shadow-xs">
+      <div class="flex flex-wrap items-baseline gap-2">
+        <h2 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">涉及页面</h2>
+        <span class="text-[11px] text-base-content/35">固定位标签 · {SCREEN_SLOT.label}</span>
+      </div>
+
+      <ul class="mt-3 flex flex-wrap gap-2">
+        {
+          page.screens.map((screen, index) => (
+            <li>
+              <a
+                href={screenUrl(screen.id)}
+                class="flex items-center gap-2 rounded-full bg-base-200/50 px-3.5 py-2 transition hover:bg-base-200"
+              >
+                <span class="font-mono text-[11px] text-base-content/35">{index + 1}</span>
+                <span class="text-sm font-medium">{screen.name}</span>
+                <span class="text-[11px] text-base-content/40">{screen.route}</span>
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    {
+      page.sections.map((section) => (
+        <section
+          id={section.behavior.id}
+          class="mb-5 overflow-hidden rounded-3xl bg-base-100 shadow-xs"
+        >
+          <header class="flex flex-wrap items-center gap-2.5 px-5 py-4">
+            <span class="grid h-7 w-7 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-content">
+              {section.no}
+            </span>
+            <h2 class="text-base font-semibold">{section.behavior.title}</h2>
+            {
+              section.tags.length > 0 && (
+                <ul class="flex flex-wrap gap-1">
+                  {section.tags.map((tag) => (
+                    <li
+                      class="rounded-full bg-base-200 px-2 py-0.5 text-[10px] font-normal text-base-content/55"
+                      title={tag.description}
+                    >
+                      {tag.label}
+                    </li>
+                  ))}
+                </ul>
+              )
+            }
+            <span class="badge badge-ghost badge-sm ml-auto gap-1 font-normal text-base-content/60">
+              {section.screen.name}
+            </span>
+          </header>
+
+          {section.behavior.intro && (
+            <p class="bg-base-200/40 px-5 py-2.5 text-[13px] leading-relaxed text-base-content/60">
+              {section.behavior.intro}
+            </p>
+          )}
+
+          <ol class="divide-y divide-base-200">
+            {section.steps.map((step) => (
+              <li class="grid gap-4 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-start">
+                <div class="flex min-w-0 gap-3">
+                  <span class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-base-200 text-[11px] font-semibold text-base-content/55">
+                    {step.no}
+                  </span>
+
+                  <div class="min-w-0 flex-1">
+                    <p class="text-[15px] font-medium leading-relaxed">{step.op.action}</p>
+
+                    {step.op.note && (
+                      <p class="mt-1.5 text-[13px] leading-relaxed text-base-content/60">
+                        {step.op.note}
+                      </p>
+                    )}
+
+                    {step.introduces.map((concept) => (
+                      <ConceptNote concept={concept} />
+                    ))}
+                  </div>
+                </div>
+
+                {step.op.hotspot || step.op.image ? (
+                  <ScreenFrame
+                    screen={section.screen}
+                    label={step.op.short}
+                    image={shotOf(step.op)}
+                    hotspot={step.op.hotspot}
+                  />
+                ) : (
+                  <div class="grid h-full min-h-20 place-items-center rounded-xl border border-dashed border-base-300 text-[11px] text-base-content/35">
+                    未标注界面区域
+                  </div>
+                )}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))
+    }
+
+    {
+      related.length > 0 && (
+        <section class="mt-10">
+          <h2 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/45">
+            可能也想知道
+          </h2>
+          <ul class="mt-3 grid gap-2 sm:grid-cols-2">
+            {related.map((item) => (
+              <li>
+                <a
+                  href={functionUrl(item.fn.id)}
+                  class="group flex items-center justify-between gap-3 rounded-2xl bg-base-100 px-4 py-3 shadow-xs transition hover:shadow-sm"
+                >
+                  <span class="text-sm font-medium transition-colors group-hover:text-secondary">
+                    {item.fn.question}
+                  </span>
+                  <span class="shrink-0 font-mono text-[11px] text-base-content/40">
+                    {item.shared.length} 个共同概念
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )
+    }
+  </article>
+</Base>

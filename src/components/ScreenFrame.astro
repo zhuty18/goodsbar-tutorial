@@ -1,0 +1,64 @@
+---
+import type { Hotspot, Screen } from '../lib/graph';
+
+interface Props {
+  screen: Screen;
+  /** 原子操作的中文简称，显示在图下方 */
+  label: string;
+  /** 已解析成最终 URL 的截图地址；没有就走骨架示意图 */
+  image?: string;
+  hotspot?: Hotspot;
+}
+
+const { screen, label, image, hotspot } = Astro.props;
+---
+
+<figure class="overflow-hidden rounded-2xl bg-base-100 shadow-xs">
+  <div class="relative bg-base-200/50">
+    {
+      image ? (
+        <img
+          src={image}
+          alt={`${label}（${screen.name}）`}
+          class="block w-full"
+          loading="lazy"
+          decoding="async"
+        />
+      ) : (
+        <div class="aspect-[16/9] p-3">
+          <div class="flex h-full gap-2">
+            <div class="flex w-1/5 flex-col gap-1.5 rounded-xl bg-base-200/70 p-1.5">
+              <div class="h-1.5 w-4/5 rounded-full bg-base-100/80"></div>
+              <div class="h-1.5 w-3/5 rounded-full bg-base-100/60"></div>
+              <div class="h-1.5 w-4/5 rounded-full bg-base-100/60"></div>
+              <div class="h-1.5 w-2/5 rounded-full bg-base-100/60"></div>
+            </div>
+
+            <div class="flex-1 space-y-2">
+              <div class="h-2.5 w-2/5 rounded-full bg-base-300/50"></div>
+              <div class="h-2 w-full rounded-full bg-base-300/30"></div>
+              <div class="h-2 w-11/12 rounded-full bg-base-300/30"></div>
+              <div class="h-2 w-full rounded-full bg-base-300/30"></div>
+              <div class="h-2 w-9/12 rounded-full bg-base-300/30"></div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    {
+      hotspot && (
+        <div
+          class="absolute rounded-xl bg-primary/15 ring-4 ring-primary/10"
+          style={`left:${hotspot.x}%;top:${hotspot.y}%;width:${hotspot.w}%;height:${hotspot.h}%`}
+        >
+          <span class="absolute -left-1 -top-1 h-2 w-2 rounded-full bg-primary"></span>
+        </div>
+      )
+    }
+  </div>
+
+  <figcaption class="bg-base-100 px-3 py-2 text-center text-[11px] text-base-content/45">
+    <span class="truncate">{label}</span>
+  </figcaption>
+</figure>

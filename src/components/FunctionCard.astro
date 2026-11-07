@@ -1,0 +1,66 @@
+---
+import type { FunctionPage } from '../lib/compose';
+import { functionUrl } from '../lib/graph';
+
+interface Props {
+  page: FunctionPage;
+}
+
+const { page } = Astro.props;
+const { fn, category, concepts, screens, tags } = page;
+
+const search = [
+  fn.question,
+  fn.summary,
+  category.label,
+  ...concepts.flatMap((concept) => [concept.title, ...concept.aliases]),
+  ...screens.map((screen) => screen.name),
+]
+  .join(' ')
+  .toLowerCase();
+---
+
+<a
+  href={functionUrl(fn.id)}
+  data-card="1"
+  data-search={search}
+  data-screens={screens.map((screen) => screen.id).join(' ')}
+  class="card group rounded-3xl bg-base-100 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:shadow-md"
+>
+  <div class="card-body gap-3 p-5">
+    <div class="flex items-start gap-2.5">
+      <span
+        class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-primary text-[11px] font-semibold text-primary-content"
+        title={category.label}
+      >
+        {category.label.charAt(0)}
+      </span>
+      <h3 class="text-base font-semibold leading-snug transition-colors group-hover:text-secondary">
+        {fn.question}
+      </h3>
+    </div>
+
+    <p class="text-sm leading-relaxed text-base-content/60">{fn.summary}</p>
+
+    <div class="mt-auto flex items-end justify-between gap-3 pt-3">
+      <span class="min-w-0 truncate text-[11px] text-base-content/40">
+        {screens.map((screen) => screen.name).join(' → ')}
+      </span>
+
+      {
+        tags.length > 0 && (
+          <ul class="flex max-w-[62%] shrink-0 flex-wrap justify-end gap-1">
+            {tags.map((tag) => (
+              <li
+                class="rounded-full bg-base-200 px-2 py-0.5 text-[10px] font-normal text-base-content/55"
+                title={tag.description}
+              >
+                {tag.label}
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </div>
+  </div>
+</a>

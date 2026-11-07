@@ -1,0 +1,40 @@
+---
+import Base from '../../layouts/Base.astro';
+import ScreenCard from '../../components/ScreenCard.astro';
+import { getGraph } from '../../lib/graph';
+import { screenGroups, screenUsage } from '../../lib/compose';
+
+const graph = getGraph();
+const usage = new Map(screenUsage(graph).map((item) => [item.screen.id, item]));
+const groups = screenGroups(graph);
+
+const usageOf = (screenId: string) => usage.get(screenId) ?? { entries: [] };
+---
+
+<Base title="界面一览 · GoodsBar 使用手册" description="每个界面上会发生哪些行为。">
+  <header class="mb-8 max-w-2xl">
+    <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-secondary">界面一览</p>
+    <h1 class="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">行为发生的地方</h1>
+    <p class="mt-3 text-[15px] leading-relaxed text-base-content/65">
+      一个行为不会跨界面，所以「界面」是手册里最自然的分组单位。二级界面挂在它的一级界面下面。
+    </p>
+  </header>
+
+  <div class="space-y-5">
+    {
+      groups.map(({ root, children }) => (
+        <div class="space-y-2">
+          <ScreenCard screen={root} entries={usageOf(root.id).entries} />
+
+          {children.length > 0 && (
+            <div class="ml-4 space-y-2 border-l border-base-200 pl-4">
+              {children.map((child) => (
+                <ScreenCard screen={child} entries={usageOf(child.id).entries} />
+              ))}
+            </div>
+          )}
+        </div>
+      ))
+    }
+  </div>
+</Base>

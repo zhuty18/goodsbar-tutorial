@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@plugin "daisyui" {
+  themes: bumblebee --default, luxury --prefersdark;
+}
+
+@plugin "@tailwindcss/typography";
+
+/* daisyUI 的主题靠 data-theme 切换，让 dark: 变体跟随它，而不是系统偏好 */
+@custom-variant dark (&:where([data-theme="luxury"], [data-theme="luxury"] *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", monospace;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    scrollbar-gutter: stable;
+  }
+
+  /* 锚点跳转时给吸顶导航留出空间 */
+  [id] {
+    scroll-margin-top: 5.5rem;
+  }
+}
+
+/* 形状统一走 daisyUI 的半径变量：按钮、输入框、卡片都更圆一些 */
+[data-theme="bumblebee"],
+[data-theme="luxury"] {
+  --radius-selector: 1.5rem;
+  --radius-field: 9999px;
+  --radius-box: 1.5rem;
+}
+
+.btn {
+  border-radius: 9999px;
+}
+
+/* bumblebee 的 primary 是亮蜂蜜黄，直接当文字色在白底上读不清。
+   primary 继续负责填充（徽章、序号、高亮），文字强调改由同色系的深棕 secondary 承担。 */
+[data-theme="bumblebee"] {
+  --color-secondary: oklch(42% 0.095 57.708);
+  --color-secondary-content: oklch(98% 0 0);
+}
+
+/* 深浅色切换按钮的图标 */
+.theme-icon-sun {
+  display: none;
+}
+
+[data-theme="luxury"] .theme-icon-sun {
+  display: block;
+}
+
+[data-theme="luxury"] .theme-icon-moon {
+  display: none;
+}
