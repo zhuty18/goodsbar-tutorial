@@ -32,3 +32,13 @@
     y: 28.3
     w: 25.5
     h: 29.7
+
+- id: close-business
+  screen: business-hour
+  action: 点击左上角按钮，结束出摊
+  short: 结束出摊
+  hotspot:
+    x: 1
+    y: 0.9
+    w: 4.4
+    h: 6.9
