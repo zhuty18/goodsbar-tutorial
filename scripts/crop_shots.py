@@ -4,14 +4,15 @@
 流程（两步）:
   1. 生成：shots-original 下每个 .jpg → 裁掉上侧 80px 系统状态栏 → 缩放到 50%
      （3008x1880 → 3008x1800 → 1504x900）→ 按 q85 存成同目录同名的 .webp
-  2. 同步：先清空 public/shots 下已有的 .webp，再把 shots-original 里的 .webp
-     按原目录结构复制进 public/shots
+  2. 同步：把 shots-original 里的 .webp 按原目录结构复制进 public/shots。
+     默认只覆盖同名文件，不动目录里的其它图；要按源目录严格镜像（删掉多出来的）就加 --prune。
 
 用法:
     python scripts/crop_shots.py               # 生成 + 同步
     python scripts/crop_shots.py --dry-run     # 只报告，不动文件
     python scripts/crop_shots.py --no-sync     # 只生成 shots-original 里的 webp
     python scripts/crop_shots.py --only-sync   # 只把 webp 同步过去
+    python scripts/crop_shots.py --prune       # 同步时删掉 public/shots 里源目录没有的 webp
     python scripts/crop_shots.py --quality 90  # 换 WebP 质量（默认 85）
 
 源图（shots-original 里的 jpg）始终保留，webp 是可随时重跑的中间产物。
@@ -138,6 +139,7 @@ def main() -> None:
     parser.add_argument("--quality", type=int, default=WEBP_QUALITY, help="WebP 质量 0-100，默认 85")
     parser.add_argument("--no-sync", action="store_true", help="只生成 shots-original 里的 webp，不同步")
     parser.add_argument("--only-sync", action="store_true", help="只做同步，不重新生成 webp")
+    parser.add_argument("--prune", action="store_true", help="同步时删掉 public/shots 里源目录没有的 webp")
     parser.add_argument("--dry-run", action="store_true", help="只报告，不写文件")
     args = parser.parse_args()
 
@@ -229,13 +231,7 @@ def main() -> None:
     if not args.no_sync:
         if not args.dry_run:
             args.dest.mkdir(parents=True, exist_ok=True)
-        stale = list(dest_webp_files(args.dest)) if args.dest.is_dir() else []
         print(f"\n步骤 2/2 同步：{rel(args.src)} 的 webp -> {rel(args.dest)}")
-        print(f"  {'将清空' if args.dry_run else '已清空'} {len(stale)} 个旧 webp")
-        if not args.dry_run:
-            for path in stale:
-                path.unlink()
-            prune_empty_dirs(args.dest)
 
         for path in source_webp:
             target = args.dest / path.relative_to(args.src)
@@ -245,6 +241,25 @@ def main() -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
         print(f"  {'将复制' if args.dry_run else '已复制'} {copied} 个 webp")
+
+        # 目标目录里多出来的 webp（源目录没有对应文件）默认原样留着，--prune 才删
+        keep = {path.relative_to(args.src).as_posix() for path in source_webp}
+        extras = [
+            path for path in (dest_webp_files(args.dest) if args.dest.is_dir() else [])
+            if path.relative_to(args.dest).as_posix() not in keep
+        ]
+        if args.prune:
+            print(f"  {'将删除' if args.dry_run else '已删除'} {len(extras)} 个源目录里没有的 webp")
+            if not args.dry_run:
+                for path in extras:
+                    path.unlink()
+                prune_empty_dirs(args.dest)
+        elif extras:
+            print(f"  目录里另有 {len(extras)} 个 webp 不在源目录里，原样保留（--prune 可删掉）：")
+            for path in extras[:5]:
+                print(f"    {rel(path)}")
+            if len(extras) > 5:
+                print(f"    ... 其余 {len(extras) - 5} 个略")
 
         if source_webp:
             total = sum(path.stat().st_size for path in source_webp if path.exists())

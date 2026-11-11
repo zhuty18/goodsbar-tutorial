@@ -190,10 +190,10 @@ const basePath = stripBase(Astro.url.pathname);
     const editorImageUrl = (path) => `${BASE}${String(path).replace(/^\/+/, '')}`;
 
     const IMAGE_EXT = /\.(png|jpe?g|webp)$/i;
-    /** jpg > png > webp，同名多格式时决定用哪张，跟 graph.ts 的 extensionRank 一致 */
+    /** webp > jpg > png，同名多格式时决定用哪张，跟 graph.ts 的 extensionRank 一致 */
     const extRank = (file) => {
       const ext = String(file).toLowerCase().split('.').pop();
-      return ext === 'jpg' || ext === 'jpeg' ? 0 : ext === 'png' ? 1 : 2;
+      return ext === 'webp' ? 0 : ext === 'jpg' || ext === 'jpeg' ? 1 : 2;
     };
 
     /** 已存下来的界面的亲界面 id（新建还没落库时拿不到） */
