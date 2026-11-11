@@ -1,6 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
-import { getGraph } from '../lib/graph';
+import { getGraph, listShotFiles } from '../lib/graph';
 import { stripBase } from '../lib/url';
 
 const graph = getGraph();
@@ -24,8 +24,15 @@ const data = {
 };
 
 const bootstrap = JSON.stringify(data).replace(/</g, '\\u003c');
-/** 界面 id → 可用截图，单独传，不混进导出包 */
-const shots = JSON.stringify(Object.fromEntries(graph.shots)).replace(/</g, '\\u003c');
+/**
+ * 截图清单：{ screens: 界面id → 界面级截图[], ops: 操作id → 操作级截图, files: 盘上全部截图 }
+ * files 是原始文件列表，新建界面时 id 还没进 graph，靠它在表单里实时预览已有截图。
+ */
+const shots = JSON.stringify({
+  screens: Object.fromEntries(graph.shots),
+  ops: Object.fromEntries(graph.opShots),
+  files: listShotFiles(),
+}).replace(/</g, '\\u003c');
 const basePath = stripBase(Astro.url.pathname);
 ---
 
@@ -77,10 +84,10 @@ const basePath = stripBase(Astro.url.pathname);
     const COLLECTIONS = [
       { key: 'screens', label: '界面', secondary: 'name' },
       { key: 'ops', label: '原子操作', secondary: 'action' },
-      { key: 'behaviors', label: '行为', secondary: 'title' },
-      { key: 'functions', label: '功能', secondary: 'question' },
       { key: 'concepts', label: '概念', secondary: 'title' },
+      { key: 'behaviors', label: '行为', secondary: 'title' },
       { key: 'tags', label: '标签', secondary: 'label' },
+      { key: 'functions', label: '功能', secondary: 'question' },
       { key: 'categories', label: '分类', secondary: 'label' },
     ];
 
@@ -122,7 +129,7 @@ const basePath = stripBase(Astro.url.pathname);
         { k: 'summary', label: '概括', type: 'textarea', required: true },
         { k: 'aliases', label: '别名', type: 'stringlist' },
         { k: 'body', label: '正文（Markdown）', type: 'textarea', rows: 10 },
-        { k: 'related', label: '相关概念', type: 'refs', ref: 'concepts' },
+        { k: 'related', label: '相关概念（相互关联，勾选会同步反向）', type: 'refs', ref: 'concepts' },
       ],
       tags: [
         { k: 'id', label: 'ID（英文 slug）', type: 'text', required: true },
@@ -145,6 +152,10 @@ const basePath = stripBase(Astro.url.pathname);
       data: structuredClone(initial),
       collection: 'screens',
       selectedId: null,
+      /** 正在编辑的对象本身：改 id 时 id 可能短暂为空，靠它兜住 */
+      selectedRef: null,
+      /** 当前对象「上一次提交」的 id，用来判断是否要级联改引用 */
+      idSnapshot: null,
       /** 左侧分组里当前展开的那个（按界面 id），其余折叠 */
       expandedGroup: null,
       filter: '',
@@ -177,17 +188,126 @@ const basePath = stripBase(Astro.url.pathname);
     const BASE = document.querySelector('[data-base]')?.getAttribute('data-base') ?? '/';
     /** 截图路径相对 public/，预览时要补上部署前缀 */
     const editorImageUrl = (path) => `${BASE}${String(path).replace(/^\/+/, '')}`;
-    /** 自己指定了就用，否则用所在界面的默认截图 */
-    const effectiveImage = (record) =>
-      record.image || (SHOTS[record.screen] ?? [])[0] || '';
+
+    const IMAGE_EXT = /\.(png|jpe?g|webp)$/i;
+    /** jpg > png > webp，同名多格式时决定用哪张，跟 graph.ts 的 extensionRank 一致 */
+    const extRank = (file) => {
+      const ext = String(file).toLowerCase().split('.').pop();
+      return ext === 'jpg' || ext === 'jpeg' ? 0 : ext === 'png' ? 1 : 2;
+    };
+
+    /** 已存下来的界面的亲界面 id（新建还没落库时拿不到） */
+    const parentOf = (screenId) => (state.data.screens ?? []).find((item) => item.id === screenId)?.parent ?? null;
+
+    /**
+     * 界面级截图列表。按命名规则从盘上的文件清单里直接匹配，而不是查 graph 的索引：
+     * 新建界面时 id 还没进 graph，查索引永远是空的，这样就看不到已经放好的截图。
+     *   一级界面 shots/<id>.webp、shots/<id>-<编号>.webp
+     *   二级界面 shots/<父界面id>/<id>.webp、shots/<父界面id>/<id>-<编号>.webp
+     */
+    function screenShots(screenId, parent) {
+      const id = String(screenId ?? '').trim();
+      if (!id) return [];
+      if (!SHOTS.files) return SHOTS.screens?.[id] ?? [];
+
+      const dir = parent ? `shots/${parent}/` : 'shots/';
+      const best = new Map();
+      for (const file of SHOTS.files) {
+        if (!file.startsWith(dir)) continue;
+        const name = file.slice(dir.length);
+        if (name.includes('/')) continue; // 子目录里的是操作级截图，不算界面级
+        const stem = name.replace(IMAGE_EXT, '');
+
+        let order;
+        if (stem === id) order = -1;
+        else if (stem.startsWith(`${id}-`) && /^\d+$/.test(stem.slice(id.length + 1))) {
+          order = Number(stem.slice(id.length + 1));
+        } else continue;
+
+        // 同名不同格式只留一张（jpg 优先），跟站点实际取图一致
+        const previous = best.get(stem);
+        if (!previous || extRank(file) < extRank(previous.file)) best.set(stem, { file, order });
+      }
+
+      return [...best.values()]
+        .sort((a, b) => a.order - b.order || a.file.localeCompare(b.file))
+        .map((item) => item.file);
+    }
+
+    /** 不指定时实际会用哪张：操作级优先，其次界面级第一张 */
+    const defaultImage = (record) =>
+      SHOTS.ops?.[record.id] || screenShots(record.screen, parentOf(record.screen))[0] || '';
+    /** 最终生效的图：自己指定 > 操作级 > 界面级 */
+    const effectiveImage = (record) => record.image || defaultImage(record);
 
     const records = () => state.data[state.collection] ?? [];
-    const current = () => records().find((item) => item.id === state.selectedId) ?? null;
+    const current = () => {
+      const list = records();
+      const byId = list.find((item) => item.id === state.selectedId);
+      if (byId) return byId;
+      // 改 id 的过程中 id 可能暂时为空或重复，用对象引用兜住，别让表单消失
+      return list.includes(state.selectedRef) ? state.selectedRef : null;
+    };
     const fields = () => FIELDS[state.collection] ?? [];
 
     function markDirty() {
       state.dirty = true;
       el.dirty?.classList.remove('hidden');
+    }
+
+    /** 同一集合里是否已有别的记录占用了这个 id */
+    function isDuplicateId(collection, id, except) {
+      return (state.data[collection] ?? []).some((item) => item !== except && item.id === id);
+    }
+
+    /**
+     * 相关概念是相互的：A 勾上 B，B 那边也要勾上 A；取消勾选时反向一起取消。
+     * graph 构建时会做同样的对称化（兜住手写内容只写一边的情况），这里是为了编辑时即时看到。
+     */
+    function syncRelatedConcepts(record) {
+      if (!record?.id) return;
+      const linked = new Set(record.related ?? []);
+      for (const other of state.data.concepts ?? []) {
+        if (other === record || !other.id) continue;
+        const has = (other.related ?? []).includes(record.id);
+        if (linked.has(other.id) && !has) {
+          other.related = [...(other.related ?? []), record.id];
+        } else if (!linked.has(other.id) && has) {
+          other.related = other.related.filter((id) => id !== record.id);
+        }
+      }
+    }
+
+    /** 把旧 id 换成新 id：所有引用它的字段一起改 */
+    function renameReferences(collection, oldId, newId) {
+      for (const key of Object.keys(state.data)) {
+        for (const record of state.data[key] ?? []) {
+          for (const def of FIELDS[key] ?? []) {
+            if (def.ref !== collection) continue;
+            if (def.type === 'ref') {
+              if (record[def.k] === oldId) record[def.k] = newId;
+            } else if (Array.isArray(record[def.k])) {
+              record[def.k] = record[def.k].map((value) => (value === oldId ? newId : value));
+            }
+          }
+        }
+      }
+    }
+
+    /**
+     * 改某个条目的 id，并级联改引用。
+     * 返回空串表示成功，否则返回不能改的原因。
+     */
+    function renameEntry(collection, record, nextId) {
+      const oldId = record.id;
+      const next = String(nextId ?? '').trim();
+      if (!next) return 'id 不能为空';
+      if (next === oldId) return '';
+      if (isDuplicateId(collection, next, record)) return `${collection} 里已经有 ${next} 了`;
+
+      record.id = next;
+      renameReferences(collection, oldId, next);
+      return '';
     }
 
     function renderTabs() {
@@ -205,10 +325,10 @@ const basePath = stripBase(Astro.url.pathname);
       const term = state.filter.trim().toLowerCase();
       const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-      const rowHtml = (record) => {
+      const rowHtml = (record, indented = false) => {
         const on = record.id === state.selectedId;
         const label = itemLabel(record) || record[collection.secondary] || record.id;
-        return `<li>
+        return `<li class="${indented ? 'ml-3 border-l border-base-200 pl-2' : ''}">
           <button type="button" data-record="${escapeHtml(record.id)}"
             class="w-full rounded-xl px-3 py-2 text-left transition ${on ? 'bg-primary/10' : 'hover:bg-base-200/70'}">
             <span class="block truncate text-[13px] font-medium">${escapeHtml(label)}</span>
@@ -250,11 +370,34 @@ const basePath = stripBase(Astro.url.pathname);
               </button>
             </li>`;
 
-            return open ? header + rows.map(rowHtml).join('') : header;
+            // 注意用箭头函数包一层：直接把 rowHtml 传给 map，索引会被当成 indented 参数
+            return open ? header + rows.map((record) => rowHtml(record)).join('') : header;
           })
           .join('');
+      } else if (collection.key === 'screens') {
+        // 二级界面缩进挂在一级界面下面，改完亲界面立刻能看到位置变化
+        const rendered = new Set();
+        const childrenOf = (id) => items.filter((record) => record.parent === id).sort(byId);
+
+        const parts = items
+          .filter((record) => !record.parent)
+          .sort(byId)
+          .map((root) => {
+            rendered.add(root.id);
+            const kids = childrenOf(root.id)
+              .map((child) => {
+                rendered.add(child.id);
+                return rowHtml(child, true);
+              })
+              .join('');
+            return rowHtml(root) + kids;
+          });
+
+        // 亲界面被筛掉或指向不存在的界面时，兜底平铺出来，别让记录消失
+        const orphans = items.filter((record) => !rendered.has(record.id)).sort(byId);
+        html = parts.join('') + orphans.map((record) => rowHtml(record, true)).join('');
       } else {
-        html = items.sort(byId).map(rowHtml).join('');
+        html = items.sort(byId).map((record) => rowHtml(record)).join('');
       }
 
       el.list.innerHTML = html || '<li class="px-3 py-6 text-center text-xs text-base-content/40">没有记录</li>';
@@ -287,7 +430,7 @@ const basePath = stripBase(Astro.url.pathname);
         return `<label class="block">
           <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
           <textarea data-field="${field.k}" rows="${field.rows ?? 3}"${req}
-            class="textarea w-full bg-base-200/50 font-mono text-[13px]">${escapeHtml(value ?? '')}</textarea>
+            class="textarea w-full resize-y rounded-xl bg-base-200/50 font-mono text-[13px]">${escapeHtml(value ?? '')}</textarea>
         </label>`;
       }
 
@@ -314,7 +457,11 @@ const basePath = stripBase(Astro.url.pathname);
 
       if (field.type === 'refs') {
         const chosen = new Set(Array.isArray(value) ? value : []);
-        const boxes = (state.data[field.ref] ?? [])
+        // 自引用（比如概念的「相关概念」）不能选自己
+        const pool = (state.data[field.ref] ?? []).filter(
+          (item) => !(field.ref === state.collection && item.id === record.id),
+        );
+        const boxes = pool
           .map(
             (item) => `<label class="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-base-200/60">
               <input type="checkbox" data-field="${field.k}" value="${escapeHtml(item.id)}"${chosen.has(item.id) ? ' checked' : ''} class="checkbox checkbox-xs" />
@@ -344,9 +491,10 @@ const basePath = stripBase(Astro.url.pathname);
             const item = lookup.get(id);
             return `<li class="flex items-center gap-1.5 rounded-lg bg-base-200/40 px-2 py-1">
               <span class="w-4 shrink-0 text-right font-mono text-[11px] text-base-content/40">${index + 1}</span>
-              <span class="min-w-0 truncate text-[13px]">${escapeHtml(item ? itemLabel(item) : '（不存在）')}</span>
-              <span class="hidden min-w-0 truncate font-mono text-[10px] text-base-content/35 sm:block">${escapeHtml(id)}</span>
-              <span class="flex-1"></span>
+              <span class="min-w-0 flex-1 truncate text-[13px]">${escapeHtml(item ? itemLabel(item) : '（不存在）')}</span>
+              <input data-refseq-id="${field.k}" data-index="${index}" value="${escapeHtml(id)}" spellcheck="false"
+                title="改这里会直接改掉这个条目的 id，并同步所有引用"
+                class="input input-xs w-32 shrink-0 bg-base-100 font-mono text-[10px]" />
               <button type="button" data-order="up" data-field="${field.k}" data-index="${index}" class="btn btn-xs btn-ghost btn-square"${index === 0 ? ' disabled' : ''} title="上移">↑</button>
               <button type="button" data-order="down" data-field="${field.k}" data-index="${index}" class="btn btn-xs btn-ghost btn-square"${index === list.length - 1 ? ' disabled' : ''} title="下移">↓</button>
               <button type="button" data-order="remove" data-field="${field.k}" data-index="${index}" class="btn btn-xs btn-ghost btn-square text-error" title="移除">×</button>
@@ -372,7 +520,13 @@ const basePath = stripBase(Astro.url.pathname);
       }
 
       if (field.type === 'shot') {
-        const options = SHOTS[record.screen] ?? [];
+        // 界面级截图 + 这个操作自己的截图（如果有）
+        const options = [
+          ...new Set(
+            [...screenShots(record.screen, parentOf(record.screen)), SHOTS.ops?.[record.id]].filter(Boolean),
+          ),
+        ];
+        const fallback = defaultImage(record);
         const rows = options
           .map(
             (shot) =>
@@ -383,10 +537,10 @@ const basePath = stripBase(Astro.url.pathname);
         return `<label class="block">
           <span class="mb-1 block text-[11px] text-base-content/50">${field.label}</span>
           <select data-field="${field.k}" class="select w-full bg-base-200/50">
-            <option value="">（默认：${options[0] ? escapeHtml(options[0].replace(/^shots\//, '')) : '该界面还没有截图'}）</option>
+            <option value="">（默认：${fallback ? escapeHtml(fallback.replace(/^shots\//, '')) : '没有可用截图'}）</option>
             ${rows}
           </select>
-          <span class="mt-1 block text-[10px] text-base-content/35">截图放在 public/shots/&lt;界面id&gt;-&lt;编号&gt;.png</span>
+          <span class="mt-1 block text-[10px] text-base-content/35">一级界面放 shots/&lt;界面id&gt;.webp，二级界面放 shots/&lt;父界面id&gt;/&lt;界面id&gt;.webp；编号从 -1 起，jpg、png 也认</span>
         </label>`;
       }
 
@@ -450,6 +604,9 @@ const basePath = stripBase(Astro.url.pathname);
         return;
       }
 
+      state.selectedRef = record;
+      state.idSnapshot = record.id ?? null;
+
       const hint = `<div class="flex items-center justify-between border-b border-base-200 pb-3">
         <span class="font-mono text-[12px] text-base-content/50">${escapeHtml(record.id ?? '')}</span>
         <button type="button" data-action="delete" class="btn btn-xs btn-ghost text-error">删除</button>
@@ -459,10 +616,18 @@ const basePath = stripBase(Astro.url.pathname);
         state.collection === 'functions' || state.collection === 'behaviors'
           ? derivedConceptsHtml(record)
           : state.collection === 'screens'
-            ? derivedRouteHtml(record)
+            ? derivedRouteHtml(record) + `<div data-shots-preview>${derivedShotsHtml(record)}</div>`
             : '';
 
       el.form.innerHTML = hint + fields().map((field) => fieldHtml(field, record)).join('') + derived;
+    }
+
+    /** 改 id / 亲界面时只刷新截图预览这一块，不动别的输入框（不丢焦点） */
+    function refreshShotsPreview() {
+      const box = el.form.querySelector('[data-shots-preview]');
+      const record = current();
+      if (!box || !record) return;
+      box.innerHTML = derivedShotsHtml(record);
     }
 
     /** 界面路径由亲界面推导，只读展示 */
@@ -472,6 +637,36 @@ const basePath = stripBase(Astro.url.pathname);
       return `<div class="rounded-xl bg-base-200/40 p-3">
         <p class="text-[11px] text-base-content/50">界面路径（由亲界面自动生成，只读）</p>
         <p class="mt-1 text-[13px]">${escapeHtml(route || '（先填名称）')}</p>
+      </div>`;
+    }
+
+    /** 界面截图预览：这个界面在 shots 里对应的所有图 */
+    function derivedShotsHtml(record) {
+      const list = screenShots(record.id, record.parent);
+      if (list.length === 0) {
+        const where = record.parent
+          ? `shots/${escapeHtml(record.parent)}/${escapeHtml(record.id ?? '<id>')}.webp`
+          : `shots/${escapeHtml(record.id ?? '<id>')}.webp`;
+        return `<div class="rounded-xl bg-base-200/40 p-3">
+          <p class="text-[11px] text-base-content/50">截图</p>
+          <p class="mt-1 text-[12px] text-base-content/45">还没有截图。放一张 <span class="font-mono">${where}</span> 就会出现在这里。</p>
+        </div>`;
+      }
+
+      const cards = list
+        .map(
+          (shot, index) => `<a href="${escapeHtml(editorImageUrl(shot))}" target="_blank" rel="noreferrer"
+            class="group block overflow-hidden rounded-lg bg-base-100 shadow-xs">
+            <img src="${escapeHtml(editorImageUrl(shot))}" alt="" loading="lazy"
+              class="h-auto w-full transition group-hover:opacity-90" />
+            <span class="block truncate px-2 py-1 font-mono text-[10px] text-base-content/45">${index === 0 ? '默认 · ' : ''}${escapeHtml(shot.replace(/^shots\//, ''))}</span>
+          </a>`,
+        )
+        .join('');
+
+      return `<div class="rounded-xl bg-base-200/40 p-3">
+        <p class="mb-2 text-[11px] text-base-content/50">截图 · ${list.length} 张（第一张是默认）</p>
+        <div class="grid grid-cols-2 gap-2">${cards}</div>
       </div>`;
     }
 
@@ -602,18 +797,39 @@ const basePath = stripBase(Astro.url.pathname);
 
       const def = fields().find((item) => item.k === field.split('.')[0]);
 
+      // id 单独处理：改它的时候，引用它的地方要一起改
+      if (field === 'id') {
+        const next = String(target.value).trim();
+        const prev = state.idSnapshot;
+
+        if (prev && next && next !== prev && !isDuplicateId(state.collection, next, record)) {
+          renameReferences(state.collection, prev, next);
+          state.idSnapshot = next;
+        }
+
+        record.id = target.value;
+        state.selectedId = next || prev;
+        state.selectedRef = record;
+        syncExpandedGroup();
+        refreshShotsPreview();
+        markDirty();
+        return;
+      }
+
       if (def?.type === 'hotspot' || def?.type === 'number') {
         setPath(record, field, target.value === '' ? undefined : Number(target.value));
         updateHotspotPreview(record);
       } else setPath(record, field, target.value);
 
       if (field === 'image') updatePreviewImage(record);
-      if (field === 'id') state.selectedId = record.id;
-      if (field === 'id' || field === 'screen') syncExpandedGroup();
+      if (field === 'screen' || field === 'parent') syncExpandedGroup();
       markDirty();
       renderList();
-      // 换界面会影响可用截图 / 可选原子操作，重绘一次表单
-      if (field === 'screen') renderForm();
+      // 换界面会影响可用截图 / 可选原子操作；改亲界面会改变界面路径和层级，都要重绘表单
+      if (field === 'screen' || field === 'parent') {
+        renderForm();
+        refreshShotsPreview();
+      }
     });
 
     /** 改了截图路径就换预览图；没有图就退回骨架 */
@@ -731,13 +947,85 @@ const basePath = stripBase(Astro.url.pathname);
 
     el.form.addEventListener('change', (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+      if (!(target instanceof HTMLInputElement)) return;
+
+      // 序列里的 id 输入：直接改那个条目的 id，引用跟着一起改
+      if (target.dataset.refseqId) {
+        const field = target.dataset.refseqId;
+        const record = current();
+        const def = fields().find((item) => item.k === field);
+        const index = Number(target.dataset.index);
+        if (!record || !def || !Array.isArray(record[field])) return;
+
+        const oldId = record[field][index];
+        const next = target.value.trim();
+        if (next === oldId) return;
+
+        const targetRecord = (state.data[def.ref] ?? []).find((item) => item.id === oldId);
+        if (!targetRecord) {
+          showProblems([`找不到 id 为 ${oldId} 的条目`]);
+          target.value = oldId;
+          return;
+        }
+
+        const error = renameEntry(def.ref, targetRecord, next);
+        if (error) {
+          showProblems([error]);
+          target.value = oldId;
+          return;
+        }
+
+        showProblems([]);
+        markDirty();
+        renderList();
+        renderForm();
+        return;
+      }
+
+      // 主 id 字段：空或重复时回退到上一个合法值
+      if (target.dataset.field === 'id') {
+        const record = current();
+        if (!record) return;
+
+        const next = String(target.value).trim();
+        const snapshot = state.idSnapshot;
+
+        if (!next || isDuplicateId(state.collection, next, record)) {
+          showProblems([next ? `id 重复：${state.collection} 里已经有 ${next}` : 'id 不能为空']);
+          record.id = snapshot;
+          target.value = snapshot ?? '';
+          state.selectedId = snapshot;
+          state.selectedRef = record;
+          renderList();
+          renderForm();
+          return;
+        }
+
+        if (next !== record.id) {
+          const error = renameEntry(state.collection, record, next);
+          if (error) {
+            showProblems([error]);
+            return;
+          }
+          state.idSnapshot = next;
+          state.selectedId = next;
+        } else {
+          showProblems([]);
+        }
+
+        renderList();
+        renderForm();
+        return;
+      }
+
+      if (target.type !== 'checkbox') return;
 
       const field = target.dataset.field;
       const record = current();
       if (!field || !record) return;
 
       record[field] = [...el.form.querySelectorAll(`input[type=checkbox][data-field="${field}"]:checked`)].map((input) => input.value);
+      if (state.collection === 'concepts' && field === 'related') syncRelatedConcepts(record);
       markDirty();
       renderList();
     });
@@ -817,20 +1105,31 @@ const basePath = stripBase(Astro.url.pathname);
       const problems = [];
       const ids = {};
 
+      // 两趟：先把所有集合的 id 建好，再做引用检查。
+      // 否则引用的集合还没轮到初始化，ids[field.ref] 会是 undefined。
       for (const collection of COLLECTIONS) {
-        ids[collection.key] = new Set();
+        const set = new Set();
         for (const record of state.data[collection.key] ?? []) {
           if (!record.id) problems.push(`${collection.label}：有一条记录缺少 id`);
-          else if (ids[collection.key].has(record.id)) problems.push(`${collection.label}：id 重复 ${record.id}`);
-          ids[collection.key].add(record.id);
+          else if (set.has(record.id)) problems.push(`${collection.label}：id 重复 ${record.id}`);
+          set.add(record.id);
+        }
+        ids[collection.key] = set;
+      }
 
+      for (const collection of COLLECTIONS) {
+        for (const record of state.data[collection.key] ?? []) {
           for (const field of FIELDS[collection.key] ?? []) {
-            if (field.type === 'ref' && record[field.k] && !ids[field.ref].has(record[field.k])) {
+            const pool = ids[field.ref];
+            if (!pool) continue;
+
+            if (field.type === 'ref' && record[field.k] && !pool.has(record[field.k])) {
               problems.push(`${collection.label} ${record.id}：${field.label} 指向不存在的 ${record[field.k]}`);
             }
+
             if (field.type === 'refs' || field.type === 'refseq') {
               for (const value of record[field.k] ?? []) {
-                if (!ids[field.ref].has(value)) {
+                if (!pool.has(value)) {
                   problems.push(`${collection.label} ${record.id}：${field.label} 指向不存在的 ${value}`);
                 }
               }
@@ -852,20 +1151,47 @@ const basePath = stripBase(Astro.url.pathname);
       el.problems.innerHTML = `<p class="mb-1 font-semibold">发现 ${problems.length} 个问题，先修掉再导出：</p><ul class="list-disc pl-5">${problems
         .map((problem) => `<li>${escapeHtml(problem)}</li>`)
         .join('')}</ul>`;
+      el.problems.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+
+    /** 导出文件名用本地时间，精确到秒：2026-11-11-23-38-33 */
+    function timestamp(date = new Date()) {
+      const pad = (value) => String(value).padStart(2, '0');
+      return [
+        date.getFullYear(),
+        pad(date.getMonth() + 1),
+        pad(date.getDate()),
+        pad(date.getHours()),
+        pad(date.getMinutes()),
+        pad(date.getSeconds()),
+      ].join('-');
     }
 
     el.exportBtn.addEventListener('click', () => {
-      const problems = validate();
+      let problems = [];
+      try {
+        problems = validate();
+      } catch (error) {
+        problems = [`导出前校验出错：${error instanceof Error ? error.message : String(error)}`];
+      }
+
       showProblems(problems);
       if (problems.length > 0) return;
 
       const bundle = { version: 1, exportedAt: new Date().toISOString(), ...state.data };
       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+
       const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'goodsbar-content.json';
+      link.href = url;
+      link.download = `goodsbar-content-${timestamp()}.json`;
+      link.style.display = 'none';
+      document.body.appendChild(link);
       link.click();
-      URL.revokeObjectURL(link.href);
+      link.remove();
+
+      // 立刻 revoke 会在部分浏览器里把下载掐断，等一拍再释放
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
 
       state.dirty = false;
       el.dirty?.classList.add('hidden');

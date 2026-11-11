@@ -2,10 +2,13 @@
 """把 /editor 导出的打包文件写回 src/content。
 
 用法:
-    python scripts/apply_bundle.py goodsbar-content.json                    # 增量补充（默认）
-    python scripts/apply_bundle.py goodsbar-content.json --mode overwrite   # 整份覆盖
-    python scripts/apply_bundle.py goodsbar-content.json --dry-run          # 只看计划，不落盘
-    python scripts/apply_bundle.py goodsbar-content.json --out /tmp         # 写到别的目录
+    python scripts/apply_bundle.py                       # 用 bundles/ 下最新的包，增量补充
+    python scripts/apply_bundle.py --mode overwrite      # 同上，整份覆盖
+    python scripts/apply_bundle.py --dry-run             # 只看计划，不落盘
+    python scripts/apply_bundle.py 别的包.json            # 指定某个包
+    python scripts/apply_bundle.py --out /tmp            # 写到别的目录
+
+不传路径时，自动取 bundles/ 里修改时间最新的 .json（编辑器导出的文件名带时间戳）。
 
 打包文件是 /editor 页面导出的 JSON，结构为:
     { "version": 1, "screens": [...], "ops": [...], ... }
@@ -30,6 +33,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = ROOT / "src" / "content"
+DEFAULT_BUNDLE_DIR = ROOT / "bundles"
 
 # Windows 控制台默认不是 UTF-8，强制一下，免得输出变乱码
 for stream in (sys.stdout, sys.stderr):
@@ -350,9 +354,26 @@ def write_concepts(out_dir, concepts, delete_missing):
     return written, removed
 
 
+def latest_bundle(directory: Path = DEFAULT_BUNDLE_DIR) -> Path:
+    """bundles/ 下最新的 .json（按修改时间）。"""
+    if not directory.is_dir():
+        sys.exit(f"没给打包文件，也找不到目录：{directory}")
+
+    files = [path for path in directory.glob("*.json") if path.is_file()]
+    if not files:
+        sys.exit(f"没给打包文件，{directory} 里也没有 .json")
+
+    return max(files, key=lambda path: path.stat().st_mtime)
+
+
 def main():
     parser = argparse.ArgumentParser(description="把编辑器导出的内容包写回 src/content")
-    parser.add_argument("bundle", type=Path, help="打包文件路径（/editor 导出的 JSON）")
+    parser.add_argument(
+        "bundle",
+        type=Path,
+        nargs="?",
+        help="打包文件路径（/editor 导出的 JSON）；不传就用 bundles/ 下最新的那个",
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="输出目录，默认 src/content")
     parser.add_argument(
         "--mode",
@@ -362,6 +383,10 @@ def main():
     )
     parser.add_argument("--dry-run", action="store_true", help="只校验并打印计划，不写文件")
     args = parser.parse_args()
+
+    if args.bundle is None:
+        args.bundle = latest_bundle()
+        print(f"没给打包文件，用最新的：{args.bundle.relative_to(ROOT)}")
 
     if not args.bundle.exists():
         sys.exit(f"找不到打包文件: {args.bundle}")

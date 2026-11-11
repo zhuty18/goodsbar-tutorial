@@ -1,18 +1,6 @@
 # 功能分类：id 是英文键，label 是中文名。
 # 功能卡片和功能页左上角显示 label 的第一个字。
 
-- id: checkout
-  label: 收银
-  description: 结账、折扣、收款这类发生在结算台的事。
-
-- id: goods
-  label: 商品
-  description: 建档、上下架这类围绕商品档案本身的事。
-
-- id: report
-  label: 数据
-  description: 报表、导出、历史追溯这类事后回看的事。
-
-- id: stock
-  label: 库存
-  description: 盘点、调平、出入库这类影响账面数量的事。
+- id: tutorial
+  label: 新手教程
+  description: 适宜首次使用者的新手教程

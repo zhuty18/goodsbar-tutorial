@@ -64,21 +64,49 @@ pnpm preview
 src/content/   内容数据（界面、原子操作、行为、功能、概念、标签、分类）
 src/lib/       读取与校验、页面组装、概念关联图布局
 src/pages/     页面：首页、功能页、概念页、界面一览、内容体检、编辑器
-scripts/       维护脚本：把编辑器导出的数据包合并回内容目录
+scripts/       维护脚本：数据包合并、截图处理、换行符归一
+public/shots/  界面截图（上线资源，1504×900 的 WebP）
 docs/          维护者文档
 ```
 
 ## 给维护者
 
-编辑器导出的数据包用脚本合并：
+### 改内容
+
+编辑器导出的数据包用脚本合并。导出文件名带时间戳，放进 `bundles/` 后直接跑脚本即可（自动取最新的那个）：
 
 ```bash
-python scripts/apply_bundle.py goodsbar-content.json                  # 增量合并（默认）
-python scripts/apply_bundle.py goodsbar-content.json --mode overwrite # 整份覆盖
-python scripts/apply_bundle.py goodsbar-content.json --dry-run        # 只看计划
+python scripts/apply_bundle.py                  # 用 bundles/ 下最新的包，增量合并
+python scripts/apply_bundle.py --mode overwrite # 整份覆盖
+python scripts/apply_bundle.py --dry-run        # 只看计划，不落盘
+python scripts/apply_bundle.py 某个包.json       # 指定文件
 ```
 
 合并后所有 YAML 会按 id 重排，然后 `pnpm build`。
+
+### 处理截图
+
+手册只认 `public/shots/` 下的图，统一是 **1504×900 的 WebP**。手机原始截图（3008×1880，顶部带状态栏）直接丢进去，用脚本批量处理：
+
+```bash
+python scripts/crop_shots.py                 # 裁状态栏 + 缩放 + 转 WebP，源图替换掉
+python scripts/crop_shots.py --dry-run       # 先看会动哪些文件
+python scripts/crop_shots.py --keep-source   # 保留源图，只多出一份 webp
+python scripts/crop_shots.py --quality 90    # 换压缩质量（默认 85）
+```
+
+它做三件事：裁掉顶部 80px 的状态栏（时间/网络/电量）→ 缩到 1504×900 → 存成同名 `.webp`。原始尺寸的图备份在 `.shots-original/`（已忽略，不进仓库也不上线）；已经是 1504×900 的 webp 会跳过，所以重复执行安全。
+
+文件放在哪儿，决定它挂在哪个界面：
+
+| 路径 | 作用 |
+| --- | --- |
+| `shots/<界面id>.webp` | 一级界面的默认截图（不带编号优先） |
+| `shots/<界面id>-1.webp` | 同一界面的第 1、2…张 |
+| `shots/<界面id>/<操作id>.webp` | 只给那一个原子操作用，优先于界面级 |
+| `shots/<父界面id>/<界面id>.webp` | 二级界面的截图，放在父界面目录下 |
+
+同名多种格式并存时按 **webp → jpg → png** 取舍。
 
 ---
 

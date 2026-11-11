@@ -44,7 +44,7 @@ const opSchema = z.object({
   /** 界面示意图下方显示的中文简称，四五个字，用来一眼认出这一步在干嘛 */
   short: z.string().min(1),
   note: z.string().optional(),
-  /** 这一步的界面截图，路径相对 public/，例如 shots/product-list/click-new.png */
+  /** 这一步的界面截图，路径相对 public/，例如 shots/product-list/click-new.webp */
   image: z.string().min(1).optional(),
   keywords: z.array(z.string().min(1)).default([]),
   hotspot: hotspotSchema.optional(),
@@ -73,6 +73,7 @@ const conceptSchema = z.object({
   title: z.string().min(1),
   summary: z.string().min(1),
   aliases: z.array(z.string()).default([]),
+  /** 相关概念：内容里写一边就行，build() 会补成双向 */
   related: z.array(z.string()).default([]),
 });
 
@@ -144,6 +145,8 @@ export interface Graph {
   categories: Map<string, Category>;
   /** 每个界面可用的截图（相对 public/），按编号排好；第一个是默认图 */
   shots: Map<string, string[]>;
+  /** 操作级截图：shots/<界面id>/<操作id>.<ext>，比界面级更优先 */
+  opShots: Map<string, string>;
   coverage: Coverage[];
   warnings: GraphWarning[];
   stats: {
@@ -159,38 +162,166 @@ export interface Graph {
 /* ---------------------------------------------------------------- 读取 */
 
 /**
- * 截图按 `public/shots/<界面id>-<编号>.png` 放。
- * 同一个界面可以有多张，编号小的排在前面，第一个就是该界面的默认截图。
+ * 截图三种放法，都在 public/shots 下：
+ *   <界面id>.webp           界面级，不带编号，优先级最高
+ *   <界面id>-<编号>.webp    界面级，编号小的排在前面
+ *   <界面id>/<操作id>.webp  操作级，只给那一个原子操作用，比界面级优先
+ * 界面级内部：不带编号的那张永远排第一，其余按编号。
+ * 同名不同格式时优先 webp，其次 jpg、png。
  */
 const SHOT_PATTERN = /^(.+)-(\d+)\.(png|jpe?g|webp)$/i;
+const PLAIN_SHOT_PATTERN = /^(.+)\.(png|jpe?g|webp)$/i;
+const IMAGE_PATTERN = /\.(png|jpe?g|webp)$/i;
 
-function loadShots(): Map<string, string[]> {
-  const dir = path.resolve(process.cwd(), 'public', 'shots');
-  const grouped = new Map<string, { index: number; file: string }[]>();
+/** 不带编号的排在最前，其余按编号 */
+const UNNUMBERED = -1;
 
-  let files: string[] = [];
-  try {
-    files = fs.readdirSync(dir);
-  } catch {
-    return new Map();
+/** 同名不同格式时的偏好：webp 最省，其次 jpg，最后 png */
+function extensionRank(file: string): number {
+  const ext = file.toLowerCase().split('.').pop() ?? '';
+  if (ext === 'webp') return 0;
+  if (ext === 'jpg' || ext === 'jpeg') return 1;
+  if (ext === 'png') return 2;
+  return 3;
+}
+
+export interface ShotIndex {
+  /** 界面 id → 该界面的截图列表（默认图在最前） */
+  screens: Map<string, string[]>;
+  /** 操作 id → 这一个操作专用的截图 */
+  ops: Map<string, string>;
+}
+
+/**
+ * 一级界面的图直接放在 shots/ 下，二级界面的图放到它的一级界面目录里：
+ *
+ *   一级界面 R
+ *     shots/R.webp            界面级（无编号，优先）
+ *     shots/R-1.webp          界面级（有编号）
+ *     shots/R/<操作id>.webp    操作级
+ *
+ *   二级界面 C（父界面 P）
+ *     shots/P/C.webp          界面级（无编号，优先）
+ *     shots/P/C-1.webp        界面级（有编号）
+ *     shots/P/C/<操作id>.webp  操作级
+ *
+ * 同一界面内部：操作级 > 无编号界面级 > 有编号界面级（编号小的在前）。
+ */
+function loadShots(screenRecords: Map<string, ScreenRecord>): ShotIndex {
+  const root = path.resolve(process.cwd(), 'public', 'shots');
+  const grouped = new Map<string, { order: number; file: string }[]>();
+  const ops = new Map<string, string>();
+
+  const readDir = (dir: string): fs.Dirent[] => {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+  };
+
+  const push = (screenId: string, order: number, file: string) => {
+    const list = grouped.get(screenId) ?? [];
+    list.push({ order, file });
+    grouped.set(screenId, list);
+  };
+
+  for (const entry of readDir(root)) {
+    // ---- 顶层文件：一级界面的界面级截图 ----
+    if (!entry.isDirectory()) {
+      const numbered = entry.name.match(SHOT_PATTERN);
+      const plain = entry.name.match(PLAIN_SHOT_PATTERN);
+      const id = numbered?.[1] ?? plain?.[1];
+      if (!id) continue;
+
+      const screen = screenRecords.get(id);
+      if (!screen || screen.parent) continue; // 二级界面的图不放这儿
+
+      push(id, numbered ? Number(numbered[2]) : UNNUMBERED, `shots/${entry.name}`);
+      continue;
+    }
+
+    // ---- 顶层目录：shots/<一级界面>/ ----
+    const parentId = entry.name;
+    if (!screenRecords.has(parentId)) continue;
+
+    for (const child of readDir(path.join(root, parentId))) {
+      // shots/<父>/<子界面>/ = 子界面的操作级截图
+      if (child.isDirectory()) {
+        const sub = screenRecords.get(child.name);
+        if (!sub || sub.parent !== parentId) continue;
+
+        for (const file of readDir(path.join(root, parentId, child.name))) {
+          if (file.isDirectory() || !IMAGE_PATTERN.test(file.name)) continue;
+          const opId = file.name.replace(IMAGE_PATTERN, '');
+          const relative = `shots/${parentId}/${child.name}/${file.name}`;
+          const current = ops.get(opId);
+          if (!current || extensionRank(file.name) < extensionRank(current)) ops.set(opId, relative);
+        }
+        continue;
+      }
+
+      const numbered = child.name.match(SHOT_PATTERN);
+      const plain = child.name.match(PLAIN_SHOT_PATTERN);
+      const id = numbered?.[1] ?? plain?.[1];
+      if (!id) continue;
+
+      // shots/<父>/<子界面>.webp = 子界面的界面级截图
+      const screen = screenRecords.get(id);
+      if (screen && screen.parent === parentId) {
+        push(id, numbered ? Number(numbered[2]) : UNNUMBERED, `shots/${parentId}/${child.name}`);
+        continue;
+      }
+
+      // 否则是这一级界面自己的操作级截图：shots/<界面>/<操作id>.webp
+      if (numbered) continue;
+      const relative = `shots/${parentId}/${child.name}`;
+      const current = ops.get(id);
+      if (!current || extensionRank(child.name) < extensionRank(current)) ops.set(id, relative);
+    }
   }
 
-  for (const file of files) {
-    const match = file.match(SHOT_PATTERN);
-    if (!match) continue;
-    const list = grouped.get(match[1]) ?? [];
-    list.push({ index: Number(match[2]), file });
-    grouped.set(match[1], list);
-  }
-
-  const shots = new Map<string, string[]>();
+  const screens = new Map<string, string[]>();
   for (const [screenId, list] of grouped) {
-    shots.set(
+    screens.set(
       screenId,
-      list.sort((a, b) => a.index - b.index).map((item) => `shots/${item.file}`),
+      list
+        .sort((a, b) => a.order - b.order || extensionRank(a.file) - extensionRank(b.file))
+        .map((item) => item.file),
     );
   }
-  return shots;
+
+  return { screens, ops };
+}
+
+/**
+ * shots/ 下所有图片的相对路径，比如 shots/dashboard.webp、shots/product-management/new-set/new-set-1.webp。
+ *
+ * 和 loadShots 的区别：这里不管界面定义没定义，纯粹是盘上有哪些文件。
+ * 编辑器「新建界面」时 id 还没进 graph，靠它才能立刻预览已经放好的截图。
+ */
+export function listShotFiles(): string[] {
+  const root = path.resolve(process.cwd(), 'public', 'shots');
+  const files: string[] = [];
+
+  const walk = (dir: string, prefix: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue;
+      if (entry.isDirectory()) {
+        walk(path.join(dir, entry.name), `${prefix}${entry.name}/`);
+      } else if (IMAGE_PATTERN.test(entry.name)) {
+        files.push(`shots/${prefix}${entry.name}`);
+      }
+    }
+  };
+
+  try {
+    walk(root, '');
+  } catch {
+    // 还没有 shots 目录就当空清单
+  }
+
+  return files.sort();
 }
 
 const rawScreens = import.meta.glob('../content/screens/*.yaml', {
@@ -299,7 +430,6 @@ function toMap<T extends { id: string }>(rows: T[], errors: string[], label: str
 function build(): Graph {
   const errors: string[] = [];
   const warnings: GraphWarning[] = [];
-  const shots = loadShots();
 
   const screenRecords = toMap(loadRows(rawScreens, screenSchema, '界面'), errors, '界面');
   const ops = toMap(loadRows(rawOps, opSchema, '原子操作'), errors, '原子操作');
@@ -309,6 +439,17 @@ function build(): Graph {
   const functions = loadRows(rawFunctions, functionSchema, '功能');
   const conceptList = loadConcepts(rawConcepts);
   const concepts = new Map(conceptList.map((concept) => [concept.id, concept]));
+
+  // 相关概念是相互的：A 关联了 B，B 也自动关联 A。
+  // 内容里只写一边就行，这里补齐反向边；指向不存在的概念留给后面的校验报错。
+  for (const concept of concepts.values()) {
+    for (const relatedId of [...concept.related]) {
+      const target = concepts.get(relatedId);
+      if (target && !target.related.includes(concept.id)) {
+        target.related = [...target.related, concept.id];
+      }
+    }
+  }
 
   toMap(functions, errors, '功能');
 
@@ -335,8 +476,11 @@ function build(): Graph {
     }),
   );
 
+  // 截图按界面层级存放，得等界面关系确定后再扫
+  const { screens: shots, ops: opShots } = loadShots(screenRecords);
+
   // 原子操作 → 界面、关键字
-  const opsWithoutShot = new Map<string, string[]>();
+  const opsWithoutShot = new Set<string>();
 
   for (const op of ops.values()) {
     if (!screens.has(op.screen)) {
@@ -355,20 +499,19 @@ function build(): Graph {
         location: `ops.yaml · ${op.id}`,
       });
     }
-    if (!op.image && !shots.get(op.screen)?.length) {
-      const list = opsWithoutShot.get(op.screen) ?? [];
-      list.push(op.id);
-      opsWithoutShot.set(op.screen, list);
+    // 自己指定的、操作级截图、界面默认截图，三者都没有才算缺图
+    if (!op.image && !opShots.has(op.id) && !shots.get(op.screen)?.length) {
+      opsWithoutShot.add(op.screen);
     }
   }
 
   // 按界面聚合：一个界面缺图只提醒一次，而不是每个操作刷一条
-  for (const screenId of opsWithoutShot.keys()) {
+  for (const screenId of opsWithoutShot) {
     warnings.push({
       kind: 'image',
       title: screens.get(screenId)?.name ?? screenId,
       id: screenId,
-      location: `shots/${screenId}-1.png`,
+      location: `shots/${screenId}.webp`,
     });
   }
 
@@ -496,6 +639,7 @@ function build(): Graph {
     tags,
     categories,
     shots,
+    opShots,
     coverage,
     warnings,
     stats: {
@@ -528,9 +672,14 @@ export function screenUrl(id?: string): string {
   return withBase('/screens') + (id ? `#${id}` : '');
 }
 
-/** 原子操作实际用哪张图：自己指定了就用，否则退到所在界面的默认截图（编号最小的那张） */
+/**
+ * 原子操作实际用哪张图，优先级从高到低：
+ *   1. 编辑器里自己指定的 image
+ *   2. 操作级截图 shots/<界面id>/<操作id>.webp
+ *   3. 界面默认截图 shots/<界面id>-1.webp
+ */
 export function opImage(graph: Graph, op: Op): string | undefined {
-  return op.image ?? graph.shots.get(op.screen)?.[0];
+  return op.image ?? graph.opShots.get(op.id) ?? graph.shots.get(op.screen)?.[0];
 }
 
 /** public/ 下的静态资源（截图等），入参写相对 public/ 的路径即可 */

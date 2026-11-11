@@ -1,67 +1,8 @@
 # 行为：限定在一个界面内的、有顺序的原子操作序列。
 
-- id: apply-discount
-  screen: checkout
-  title: 让系统挑规则，必要时手工改价
-  intro: 系统只挑一条最省钱的规则，不叠加；人工改价是例外，不是常规。
-  tags: [permission-required]
-  ops: [apply-rule, manual-override, checkout-pay]
-
-- id: count-and-commit
-  screen: stock-take
-  title: 点数、复核、提交
-  intro: 差额在提交的那一刻才变成流水，之前都还只是草稿。
-  tags: [irreversible]
-  ops: [scan-or-input, review-diff, commit-take]
-
-- id: create-take
-  screen: stock-take
-  title: 建一张盘点单
-  intro: 一张单只盘一次。范围一旦提交就锁定，改范围只能新建一张。
-  tags: [locked-after-submit]
-  ops: [click-new-take, pick-scope]
-
-- id: fill-profile
-  screen: product-edit
-  title: 补齐商品档案
-  intro: 必填项只有名称、规格、单位三样，其余都可以先空着。
-  ops: [fill-name, set-category, set-price]
-
-- id: offline-product
-  screen: product-list
-  title: 停售一件商品
-  intro: 停售用「下架」，不要用「删除」——删除会连历史一起带走。
-  tags: [reversible]
-  ops: [select-product, click-offline, confirm-offline]
-
-- id: open-create
-  screen: product-list
-  title: 从商品列表发起新建
-  intro: 新建入口只有一处，避免同一件商品被建出两份档案。
-  tags: [frequent, recommended]
-  ops: [click-new, scan-barcode]
-
-- id: open-history
-  screen: sales-report
-  title: 钻到单品的历史明细
-  intro: 从汇总到单品，再到底层流水，每一层都能继续往下点。
-  ops: [pick-product, pick-range, export-csv]
-
-- id: pick-member
-  screen: checkout
-  title: 先认会员，再谈折扣
-  intro: 没认会员就结算，后面所有折扣都只能按散客价走。
-  ops: [search-member, confirm-tier]
-
-- id: publish-product
-  screen: product-edit
-  title: 设好期初库存，然后上架
-  intro: 期初库存是这笔商品流水的起点，之后每一次出入库都会记一条流水。
-  ops: [set-initial-stock, save-publish]
-
-- id: show-offline
-  screen: sales-report
-  title: 把已下架商品放回报表
-  intro: 报表默认只看在架商品，因为多数时候你关心的是「还卖得动什么」。
-  tags: [default-off]
-  ops: [open-report, include-offline]
+- id: new-single
+  screen: product-management
+  title: 新建单个制品
+  intro: 建立一个新的SKU
+  tags: [new-product]
+  ops: [click-new-product]

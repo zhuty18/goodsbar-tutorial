@@ -1,16 +1,8 @@
 ---
 title: 单个制品（SKU）
-summary: SKU指最小仓储单元（Stock Keep Unit），管理制品的最小单位
-aliases: [SKU, 单制品]
-related: [soft-delete, stock-deduction]
+summary: 最小仓储单位（Stock Keeping Unit），即 GoodsBar 中的单个制品。
+aliases: [单制品]
+related: [spu, property-tag]
 ---
 
-商品档案是 GoodsBar 里所有数据的锚点。库存、售价、销量、折扣，都是挂在某个 SKU 上的。
 
-判断两个东西是不是同一个 SKU，看三条：**名称、规格、单位**。三条完全一致就是同一个 SKU，系统会拒绝重复建档，并在保存时提示你「已有同名同规格商品」。
-
-## 常见误解
-
-- 「同款不同颜色算一个 SKU。」——不算。颜色属于规格，几个颜色就是几个 SKU。
-- 「改了名字就是新商品。」——不是。改名沿用原 SKU，历史销量会跟着走。
-- 「删掉重建，数据更干净。」——重建等于把这条历史切断。要停售请用[软下架](/concepts/soft-delete)。

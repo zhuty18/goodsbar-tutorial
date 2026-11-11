@@ -1,23 +1,31 @@
 # 界面：原子操作的容器。一个原子操作只属于一个界面，一个行为也只在一个界面内发生。
 # parent 留空 = 一级界面；否则指向一个一级界面（只支持两级）。路径由层级自动生成。
 
-- id: checkout
-  name: 结算台
-  note: 扫码、认会员、优惠、收款，一条流水在这里走完。
+- id: business-hour
+  name: 出摊
+  note: 出摊界面
 
-- id: product-edit
-  name: 商品编辑
-  parent: product-list
-  note: 新建与修改共用同一张表单，字段完全一致。
+- id: dashboard
+  name: 仪表盘
+  note: 登陆默认主页
 
-- id: product-list
-  name: 商品列表
-  note: 在架与已下架商品的统一入口，也是所有商品级操作的起点。
+- id: event-management
+  name: 活动管理
+  note: 活动管理的主页
 
-- id: sales-report
-  name: 销售报表
-  note: 按商品、分类、时段聚合的销售数据，支持钻取到单品。
+- id: history-data
+  name: 历史数据
+  note: 历史数据统计与分析
 
-- id: stock-take
-  name: 库存盘点
-  note: 盘点单的列表、明细与提交都在这一页完成。
+- id: new-product
+  name: 录入库存
+  parent: product-management
+  note: 录入库存（新增制品）的聚合入口
+
+- id: product-management
+  name: 制品管理
+  note: 管理制品的后台界面
+
+- id: tag-management
+  name: 标签管理
+  note: 管理标签的显示、顺序和处理

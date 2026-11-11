@@ -5,4 +5,6 @@ dist/
 .DS_Store
 *.log
 .shot-profile/
-shot-*.png
+.sync_temp_dir
+shots-original/
+bundles/
