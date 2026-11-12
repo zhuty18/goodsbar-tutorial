@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { marked } from 'marked';
 import { z } from 'zod';
 
+import { IMAGE_PATTERN, opShotInfo, screenShotList } from './shots';
 import { BASE, withBase } from './url';
 
 /**
@@ -145,8 +146,10 @@ export interface Graph {
   categories: Map<string, Category>;
   /** 每个界面可用的截图（相对 public/），按编号排好；第一个是默认图 */
   shots: Map<string, string[]>;
-  /** 操作级截图：shots/<界面id>/<操作id>.<ext>，比界面级更优先 */
+  /** 操作级截图：shots/<界面id>/<操作id>…，比界面级更优先 */
   opShots: Map<string, string>;
+  /** 每个操作可选的全部合法截图（含界面级与界面目录下的其它文件），编辑器用 */
+  opCandidates: Map<string, string[]>;
   coverage: Coverage[];
   warnings: GraphWarning[];
   stats: {
@@ -162,145 +165,52 @@ export interface Graph {
 /* ---------------------------------------------------------------- 读取 */
 
 /**
- * 截图三种放法，都在 public/shots 下：
- *   <界面id>.webp           界面级，不带编号，优先级最高
- *   <界面id>-<编号>.webp    界面级，编号小的排在前面
- *   <界面id>/<操作id>.webp  操作级，只给那一个原子操作用，比界面级优先
- * 界面级内部：不带编号的那张永远排第一，其余按编号。
+ * 截图都在 public/shots 下，命名规则见 shots.ts：
+ *
+ *   <界面id>.webp             界面级，不带编号
+ *   <界面id>-1.webp           界面级，按编号排序
+ *   <界面id>-关掉的.webp       界面级，带名字的变体
+ *   <界面id>-3-1.webp         界面级，编号 + 名字
+ *   <界面id>/<操作id>.webp     操作级，只给那一个原子操作用
+ *
+ * 界面级按文件名匹配，不限制目录，所以二级界面既可以放在父目录下
+ * （shots/P/C-1.webp），也可以放在自己的目录里（shots/P/C/C-1.webp）。
+ * 操作级在界面目录里递归查找，<操作id>-1 这类变体也认。
  * 同名不同格式时优先 webp，其次 jpg、png。
  */
-const SHOT_PATTERN = /^(.+)-(\d+)\.(png|jpe?g|webp)$/i;
-const PLAIN_SHOT_PATTERN = /^(.+)\.(png|jpe?g|webp)$/i;
-const IMAGE_PATTERN = /\.(png|jpe?g|webp)$/i;
-
-/** 不带编号的排在最前，其余按编号 */
-const UNNUMBERED = -1;
-
-/** 同名不同格式时的偏好：webp 最省，其次 jpg，最后 png */
-function extensionRank(file: string): number {
-  const ext = file.toLowerCase().split('.').pop() ?? '';
-  if (ext === 'webp') return 0;
-  if (ext === 'jpg' || ext === 'jpeg') return 1;
-  if (ext === 'png') return 2;
-  return 3;
-}
-
 export interface ShotIndex {
   /** 界面 id → 该界面的截图列表（默认图在最前） */
   screens: Map<string, string[]>;
-  /** 操作 id → 这一个操作专用的截图 */
+  /** 操作 id → 这一个操作自己的截图 */
   ops: Map<string, string>;
+  /** 操作 id → 可选的全部截图（含界面级与界面目录下的其它文件） */
+  opCandidates: Map<string, string[]>;
 }
 
-/**
- * 一级界面的图直接放在 shots/ 下，二级界面的图放到它的一级界面目录里：
- *
- *   一级界面 R
- *     shots/R.webp            界面级（无编号，优先）
- *     shots/R-1.webp          界面级（有编号）
- *     shots/R/<操作id>.webp    操作级
- *
- *   二级界面 C（父界面 P）
- *     shots/P/C.webp          界面级（无编号，优先）
- *     shots/P/C-1.webp        界面级（有编号）
- *     shots/P/C/<操作id>.webp  操作级
- *
- * 同一界面内部：操作级 > 无编号界面级 > 有编号界面级（编号小的在前）。
- */
-function loadShots(screenRecords: Map<string, ScreenRecord>): ShotIndex {
-  const root = path.resolve(process.cwd(), 'public', 'shots');
-  const grouped = new Map<string, { order: number; file: string }[]>();
-  const ops = new Map<string, string>();
+function loadShots(screenRecords: Map<string, ScreenRecord>, opRecords: Map<string, Op>): ShotIndex {
+  const files = walkShotFiles();
+  const screens = [...screenRecords.values()];
+  const screenIds = screens.map((screen) => screen.id);
+  const ops = [...opRecords.values()];
 
-  const readDir = (dir: string): fs.Dirent[] => {
-    try {
-      return fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-  };
-
-  const push = (screenId: string, order: number, file: string) => {
-    const list = grouped.get(screenId) ?? [];
-    list.push({ order, file });
-    grouped.set(screenId, list);
-  };
-
-  for (const entry of readDir(root)) {
-    // ---- 顶层文件：一级界面的界面级截图 ----
-    if (!entry.isDirectory()) {
-      const numbered = entry.name.match(SHOT_PATTERN);
-      const plain = entry.name.match(PLAIN_SHOT_PATTERN);
-      const id = numbered?.[1] ?? plain?.[1];
-      if (!id) continue;
-
-      const screen = screenRecords.get(id);
-      if (!screen || screen.parent) continue; // 二级界面的图不放这儿
-
-      push(id, numbered ? Number(numbered[2]) : UNNUMBERED, `shots/${entry.name}`);
-      continue;
-    }
-
-    // ---- 顶层目录：shots/<一级界面>/ ----
-    const parentId = entry.name;
-    if (!screenRecords.has(parentId)) continue;
-
-    for (const child of readDir(path.join(root, parentId))) {
-      // shots/<父>/<子界面>/ = 子界面的操作级截图
-      if (child.isDirectory()) {
-        const sub = screenRecords.get(child.name);
-        if (!sub || sub.parent !== parentId) continue;
-
-        for (const file of readDir(path.join(root, parentId, child.name))) {
-          if (file.isDirectory() || !IMAGE_PATTERN.test(file.name)) continue;
-          const opId = file.name.replace(IMAGE_PATTERN, '');
-          const relative = `shots/${parentId}/${child.name}/${file.name}`;
-          const current = ops.get(opId);
-          if (!current || extensionRank(file.name) < extensionRank(current)) ops.set(opId, relative);
-        }
-        continue;
-      }
-
-      const numbered = child.name.match(SHOT_PATTERN);
-      const plain = child.name.match(PLAIN_SHOT_PATTERN);
-      const id = numbered?.[1] ?? plain?.[1];
-      if (!id) continue;
-
-      // shots/<父>/<子界面>.webp = 子界面的界面级截图
-      const screen = screenRecords.get(id);
-      if (screen && screen.parent === parentId) {
-        push(id, numbered ? Number(numbered[2]) : UNNUMBERED, `shots/${parentId}/${child.name}`);
-        continue;
-      }
-
-      // 否则是这一级界面自己的操作级截图：shots/<界面>/<操作id>.webp
-      if (numbered) continue;
-      const relative = `shots/${parentId}/${child.name}`;
-      const current = ops.get(id);
-      if (!current || extensionRank(child.name) < extensionRank(current)) ops.set(id, relative);
-    }
+  const screenShots = new Map<string, string[]>();
+  for (const id of screenIds) {
+    screenShots.set(id, screenShotList(files, id, screenIds));
   }
 
-  const screens = new Map<string, string[]>();
-  for (const [screenId, list] of grouped) {
-    screens.set(
-      screenId,
-      list
-        .sort((a, b) => a.order - b.order || extensionRank(a.file) - extensionRank(b.file))
-        .map((item) => item.file),
-    );
+  const opShots = new Map<string, string>();
+  const opCandidates = new Map<string, string[]>();
+  for (const op of ops) {
+    const info = opShotInfo(files, op, screens, ops);
+    if (info.best) opShots.set(op.id, info.best);
+    opCandidates.set(op.id, info.candidates);
   }
 
-  return { screens, ops };
+  return { screens: screenShots, ops: opShots, opCandidates };
 }
 
-/**
- * shots/ 下所有图片的相对路径，比如 shots/dashboard.webp、shots/product-management/new-set/new-set-1.webp。
- *
- * 和 loadShots 的区别：这里不管界面定义没定义，纯粹是盘上有哪些文件。
- * 编辑器「新建界面」时 id 还没进 graph，靠它才能立刻预览已经放好的截图。
- */
-export function listShotFiles(): string[] {
+/** shots/ 下所有图片的相对路径（不排序，内部用） */
+function walkShotFiles(): string[] {
   const root = path.resolve(process.cwd(), 'public', 'shots');
   const files: string[] = [];
 
@@ -321,7 +231,17 @@ export function listShotFiles(): string[] {
     // 还没有 shots 目录就当空清单
   }
 
-  return files.sort();
+  return files;
+}
+
+/**
+ * shots/ 下所有图片的相对路径，比如 shots/dashboard.webp、shots/product-management/new-set/new-set-1.webp。
+ *
+ * 和 loadShots 的区别：这里不管界面定义没定义，纯粹是盘上有哪些文件。
+ * 编辑器「新建界面」时 id 还没进 graph，靠它才能立刻预览已经放好的截图。
+ */
+export function listShotFiles(): string[] {
+  return walkShotFiles().sort();
 }
 
 const rawScreens = import.meta.glob('../content/screens/*.yaml', {
@@ -477,7 +397,7 @@ function build(): Graph {
   );
 
   // 截图按界面层级存放，得等界面关系确定后再扫
-  const { screens: shots, ops: opShots } = loadShots(screenRecords);
+  const { screens: shots, ops: opShots, opCandidates } = loadShots(screenRecords, ops);
 
   // 原子操作 → 界面、关键字
   const opsWithoutShot = new Set<string>();
@@ -640,6 +560,7 @@ function build(): Graph {
     categories,
     shots,
     opShots,
+    opCandidates,
     coverage,
     warnings,
     stats: {
@@ -675,8 +596,8 @@ export function screenUrl(id?: string): string {
 /**
  * 原子操作实际用哪张图，优先级从高到低：
  *   1. 编辑器里自己指定的 image
- *   2. 操作级截图 shots/<界面id>/<操作id>.webp
- *   3. 界面默认截图 shots/<界面id>-1.webp
+ *   2. 操作级截图 shots/<界面id>/<操作id>…（<操作id>-1 这类变体也认）
+ *   3. 界面默认截图 shots/<界面id>.webp 或 <界面id>-1.webp
  */
 export function opImage(graph: Graph, op: Op): string | undefined {
   return op.image ?? graph.opShots.get(op.id) ?? graph.shots.get(op.screen)?.[0];

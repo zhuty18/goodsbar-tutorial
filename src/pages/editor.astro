@@ -25,12 +25,14 @@ const data = {
 
 const bootstrap = JSON.stringify(data).replace(/</g, '\\u003c');
 /**
- * 截图清单：{ screens: 界面id → 界面级截图[], ops: 操作id → 操作级截图, files: 盘上全部截图 }
+ * 截图清单：{ screens: 界面id → 界面级截图[], ops: 操作id → 操作级截图,
+ *            candidates: 操作id → 全部可选图, files: 盘上全部截图 }
  * files 是原始文件列表，新建界面时 id 还没进 graph，靠它在表单里实时预览已有截图。
  */
 const shots = JSON.stringify({
   screens: Object.fromEntries(graph.shots),
   ops: Object.fromEntries(graph.opShots),
+  candidates: Object.fromEntries(graph.opCandidates),
   files: listShotFiles(),
 }).replace(/</g, '\\u003c');
 const basePath = stripBase(Astro.url.pathname);
@@ -79,6 +81,8 @@ const basePath = stripBase(Astro.url.pathname);
   <script type="application/json" id="shots" set:html={shots}></script>
 
   <script>
+    import { opShotInfo, screenShotList } from '../lib/shots';
+
     const DATA_PATH = `${window.location.pathname.replace(/\/+$/, '')}`;
 
     const COLLECTIONS = [
@@ -189,54 +193,48 @@ const basePath = stripBase(Astro.url.pathname);
     /** 截图路径相对 public/，预览时要补上部署前缀 */
     const editorImageUrl = (path) => `${BASE}${String(path).replace(/^\/+/, '')}`;
 
-    const IMAGE_EXT = /\.(png|jpe?g|webp)$/i;
-    /** webp > jpg > png，同名多格式时决定用哪张，跟 graph.ts 的 extensionRank 一致 */
-    const extRank = (file) => {
-      const ext = String(file).toLowerCase().split('.').pop();
-      return ext === 'webp' ? 0 : ext === 'jpg' || ext === 'jpeg' ? 1 : 2;
-    };
-
-    /** 已存下来的界面的亲界面 id（新建还没落库时拿不到） */
-    const parentOf = (screenId) => (state.data.screens ?? []).find((item) => item.id === screenId)?.parent ?? null;
+    /** 编辑器里当前已知的界面 id，用来把文件名分配给最长的那个 id */
+    const screenIds = () =>
+      (state.data.screens ?? []).map((item) => String(item.id ?? '').trim()).filter(Boolean);
 
     /**
-     * 界面级截图列表。按命名规则从盘上的文件清单里直接匹配，而不是查 graph 的索引：
+     * 界面级截图列表。直接拿盘上的文件清单按命名规则匹配，而不是查 graph 的索引：
      * 新建界面时 id 还没进 graph，查索引永远是空的，这样就看不到已经放好的截图。
-     *   一级界面 shots/<id>.webp、shots/<id>-<编号>.webp
-     *   二级界面 shots/<父界面id>/<id>.webp、shots/<父界面id>/<id>-<编号>.webp
+     * 规则和 graph.ts 共用（src/lib/shots.ts）：
+     *   <id>、<id>-<数字>、<id>-<任意字符串>、<id>-<数字>-<任意字符串>
+     * 不限制目录，二级界面放父目录或自己的目录都能认出来。
      */
-    function screenShots(screenId, parent) {
+    function screenShots(screenId) {
       const id = String(screenId ?? '').trim();
       if (!id) return [];
       if (!SHOTS.files) return SHOTS.screens?.[id] ?? [];
+      return screenShotList(SHOTS.files, id, screenIds());
+    }
 
-      const dir = parent ? `shots/${parent}/` : 'shots/';
-      const best = new Map();
-      for (const file of SHOTS.files) {
-        if (!file.startsWith(dir)) continue;
-        const name = file.slice(dir.length);
-        if (name.includes('/')) continue; // 子目录里的是操作级截图，不算界面级
-        const stem = name.replace(IMAGE_EXT, '');
-
-        let order;
-        if (stem === id) order = -1;
-        else if (stem.startsWith(`${id}-`) && /^\d+$/.test(stem.slice(id.length + 1))) {
-          order = Number(stem.slice(id.length + 1));
-        } else continue;
-
-        // 同名不同格式只留一张（jpg 优先），跟站点实际取图一致
-        const previous = best.get(stem);
-        if (!previous || extRank(file) < extRank(previous.file)) best.set(stem, { file, order });
+    /** 这个操作自己的截图、界面级截图、界面目录下的所有图，按优先级排好 */
+    function opInfo(record) {
+      if (!record) return null;
+      if (!SHOTS.files) {
+        return {
+          best: SHOTS.ops?.[record.id],
+          candidates: SHOTS.candidates?.[record.id] ?? [],
+        };
       }
-
-      return [...best.values()]
-        .sort((a, b) => a.order - b.order || a.file.localeCompare(b.file))
-        .map((item) => item.file);
+      const screens = (state.data.screens ?? []).filter((item) => item.id);
+      const ops = (state.data.ops ?? []).filter((item) => item.id);
+      return opShotInfo(
+        SHOTS.files,
+        { id: String(record.id ?? '').trim(), screen: String(record.screen ?? '').trim() },
+        screens,
+        ops,
+      );
     }
 
     /** 不指定时实际会用哪张：操作级优先，其次界面级第一张 */
-    const defaultImage = (record) =>
-      SHOTS.ops?.[record.id] || screenShots(record.screen, parentOf(record.screen))[0] || '';
+    const defaultImage = (record) => {
+      const info = opInfo(record);
+      return info?.best || screenShots(record.screen)[0] || SHOTS.ops?.[record.id] || '';
+    };
     /** 最终生效的图：自己指定 > 操作级 > 界面级 */
     const effectiveImage = (record) => record.image || defaultImage(record);
 
@@ -520,10 +518,16 @@ const basePath = stripBase(Astro.url.pathname);
       }
 
       if (field.type === 'shot') {
-        // 界面级截图 + 这个操作自己的截图（如果有）
+        // 这个操作自己的截图 + 界面级截图 + 界面目录下的所有图
+        const info = opInfo(record);
         const options = [
           ...new Set(
-            [...screenShots(record.screen, parentOf(record.screen)), SHOTS.ops?.[record.id]].filter(Boolean),
+            [
+              ...(info?.candidates ?? []),
+              ...screenShots(record.screen),
+              SHOTS.ops?.[record.id],
+              value,
+            ].filter(Boolean),
           ),
         ];
         const fallback = defaultImage(record);
@@ -540,7 +544,7 @@ const basePath = stripBase(Astro.url.pathname);
             <option value="">（默认：${fallback ? escapeHtml(fallback.replace(/^shots\//, '')) : '没有可用截图'}）</option>
             ${rows}
           </select>
-          <span class="mt-1 block text-[10px] text-base-content/35">一级界面放 shots/&lt;界面id&gt;.webp，二级界面放 shots/&lt;父界面id&gt;/&lt;界面id&gt;.webp；编号从 -1 起，jpg、png 也认</span>
+          <span class="mt-1 block text-[10px] text-base-content/35">界面图认 &lt;界面id&gt;、&lt;界面id&gt;-1、&lt;界面id&gt;-任意名字、&lt;界面id&gt;-1-任意名字；操作图放 shots/&lt;界面id&gt;/&lt;操作id&gt;.webp，界面目录里的其它图也能选</span>
         </label>`;
       }
 
@@ -642,14 +646,17 @@ const basePath = stripBase(Astro.url.pathname);
 
     /** 界面截图预览：这个界面在 shots 里对应的所有图 */
     function derivedShotsHtml(record) {
-      const list = screenShots(record.id, record.parent);
+      const list = screenShots(record.id);
       if (list.length === 0) {
         const where = record.parent
           ? `shots/${escapeHtml(record.parent)}/${escapeHtml(record.id ?? '<id>')}.webp`
           : `shots/${escapeHtml(record.id ?? '<id>')}.webp`;
+        const also = record.parent
+          ? `，或 shots/${escapeHtml(record.parent)}/${escapeHtml(record.id ?? '<id>')}/${escapeHtml(record.id ?? '<id>')}-1.webp`
+          : '';
         return `<div class="rounded-xl bg-base-200/40 p-3">
           <p class="text-[11px] text-base-content/50">截图</p>
-          <p class="mt-1 text-[12px] text-base-content/45">还没有截图。放一张 <span class="font-mono">${where}</span> 就会出现在这里。</p>
+          <p class="mt-1 text-[12px] text-base-content/45">还没有截图。放一张 <span class="font-mono">${where}</span>${also} 就会出现在这里。</p>
         </div>`;
       }
 

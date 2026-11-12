@@ -120,8 +120,15 @@ python scripts/crop_shots.py --quality 90    # 换压缩质量（默认 85）
 | --- | --- |
 | `dashboard.jpg` | 一级界面的默认截图（不带编号的优先） |
 | `dashboard-1.jpg` | 同一界面的第 1、2… 张，按编号排序 |
-| `product-management/new-product.jpg` | 只给那一个原子操作用，优先于界面级截图 |
-| `product-management/new-single.jpg` | 二级界面 `new-single` 的截图，放在父界面目录下 |
+| `dashboard-close.jpg` | 带名字的界面截图，排在所有编号之后 |
+| `dashboard-3-1.jpg` | 第 3 组的第 1 张，编号 + 名字 |
+| `business-hour/pickup.jpg` | 只给 `business-hour` 界面的 `pickup` 原子操作用 |
+| `business-hour/pickup-1.jpg` | 同一操作的变体；`pickup` 优先取不带编号的那张 |
+| `product-management/new-product.jpg` | 二级界面 `new-product` 的截图，放在父界面目录下 |
+| `product-management/new-single/new-single-1.jpg` | 二级界面也可以把截图放在自己的目录里 |
+| `product-management/new-single/add-pic.jpg` | 二级界面的操作截图，放在界面目录下 |
+
+界面截图只按文件名匹配，不限制目录：`<界面id>`、`<界面id>-<数字>`、`<界面id>-<任意字符串>`、`<界面id>-<数字>-<任意字符串>` 都算。文件名能对上某个界面时，这张图优先算界面截图，不会被自动当成某个操作的专用图。操作截图会在界面目录里递归查找：`<操作id>` 和 `<操作id>-<数字>` 这类变体自动认，界面目录下的其它图也能在编辑器里手动选。
 
 同一张图有多种格式时，站点按 **webp → jpg → png** 的顺序取第一张。加完图记得重新 `pnpm build`——页面用的是构建时读到的文件清单；`pnpm dev` 下刷新页面即可。编辑器里新建界面时，截图预览就是按上面这套命名实时匹配的，不用先存一次再看。
 
